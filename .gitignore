@@ -9,7 +9,7 @@ venv/
 # agent-only notes, not part of the public repo
 CLAUDE.md
 
-# generated debug artifacts from OCR experiments
-src/digitizer/experiments/ocr/debug_crops/
-src/digitizer/experiments/ocr/debug_output/
-src/digitizer/experiments/ocr/debug_outputs/
+# local run output, not source
+/*.csv
+/session.json
+scratch/
