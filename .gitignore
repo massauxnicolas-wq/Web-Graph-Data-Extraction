@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# generated debug artifacts from OCR experiments
+src/digitizer/experiments/ocr/debug_crops/
+src/digitizer/experiments/ocr/debug_output/
+src/digitizer/experiments/ocr/debug_outputs/

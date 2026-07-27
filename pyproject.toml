@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "digitizer"
+version = "0.1.0"
+description = "Automated plot digitizer with PyQtGraph + X-Step extraction"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.6",
+    "pyqtgraph>=0.13",
+    "numpy>=1.26",
+    "opencv-python>=4.8",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+digitizer = "digitizer.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
