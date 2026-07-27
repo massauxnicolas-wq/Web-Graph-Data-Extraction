@@ -65,4 +65,4 @@ reload later.
 
 ## License
 
-No license file yet — all rights reserved by default until one is added.
+[Apache License 2.0](LICENSE)
