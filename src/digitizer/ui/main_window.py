@@ -59,6 +59,7 @@ class Mode(Enum):
     IDLE = auto()
     CALIBRATING = auto()
     PICKING_COLOR = auto()
+    SETTING_SEED = auto()
 
 
 class MainWindow(QMainWindow):
@@ -89,6 +90,9 @@ class MainWindow(QMainWindow):
         self.calib_panel.reset_requested.connect(self._reset_calibration)
         self.calib_panel.auto_calibrate_requested.connect(self._auto_calibrate)
         self.calib_panel.debug_overlay_requested.connect(self._show_debug_overlay)
+        self.calib_panel.points_changed.connect(self._on_calib_points_changed)
+        self.calib_panel.grid_visibility_toggled.connect(self.image_view.set_grid_visible)
+        self.image_view.calib_marker_moved.connect(self._on_calib_marker_moved)
 
         self.curve_panel = CurvePanel()
         self.curve_panel.sample_curves_requested.connect(self._toggle_sample_curves_mode)
@@ -101,7 +105,11 @@ class MainWindow(QMainWindow):
         self.curve_panel.curve_visibility_changed.connect(self._on_curve_visibility_changed)
         self.curve_panel.curve_name_changed.connect(self._on_curve_name_changed)
         self.curve_panel.exclusion_toggled.connect(self.image_view.set_exclusion_roi_visible)
+        self.image_view.exclusion_thumbnail_changed.connect(self.curve_panel.set_exclusion_thumbnail)
         self.curve_panel.auto_detect_curves_requested.connect(self._auto_detect_curves)
+        self.curve_panel.curve_hsv_changed.connect(self._on_curve_hsv_changed)
+        self.curve_panel.curve_display_color_changed.connect(self._on_curve_display_color_changed)
+        self.curve_panel.set_seed_requested.connect(self._on_set_seed_requested)
 
         self.export_panel = ExportPanel()
         self.export_panel.export_csv_active.connect(self._export_csv_active)
@@ -139,6 +147,21 @@ class MainWindow(QMainWindow):
     def _set_mode(self, mode: Mode) -> None:
         self._mode = mode
         self.statusBar().showMessage(f"Mode: {mode.name}")
+        active = mode in (Mode.CALIBRATING, Mode.PICKING_COLOR, Mode.SETTING_SEED)
+        self.image_view.setCursor(Qt.CursorShape.CrossCursor if active else Qt.CursorShape.ArrowCursor)
+
+    def _on_calib_points_changed(self, pts: list[tuple[float, float]]) -> None:
+        xs, ys = zip(*pts) if pts else ([], [])
+        self.image_view.set_calibration_markers(list(xs), list(ys), list(CalibrationPanel.LABELS))
+
+    def _on_calib_marker_moved(self, index: int, x: float, y: float) -> None:
+        pts = self.calib_panel.pixel_points()
+        if index >= len(pts):
+            return
+        pts[index] = (x, y)
+        self.calib_panel.set_pixel_points(pts)
+        if self._calibration_M is not None:
+            self._solve_calibration(silent=True)
 
     def _enter_calibration_mode(self) -> None:
         if self._image_rgb is None:
@@ -180,11 +203,30 @@ class MainWindow(QMainWindow):
         self._image_rgb = rgb
         self._image_path = Path(path_str)
         self.image_view.set_image(rgb)
+        self.calib_panel.reset()
         self._reset_calibration()
         self._curves_dict.clear()
         self.image_view.clear_all_curves()
         self._selected_curve_id = None
+        self._auto_box = None
+        self._preview_plot_box()
         self.statusBar().showMessage(f"Loaded {self._image_path.name} ({rgb.shape[1]}x{rgb.shape[0]})")
+
+    def _preview_plot_box(self) -> None:
+        """Show a quick green outline of the detected plot box (no OCR needed)."""
+        if self._image_rgb is None:
+            return
+        try:
+            bgr = cv2.cvtColor(self._image_rgb, cv2.COLOR_RGB2BGR)
+            box = detect_plot_box(bgr)
+            self._auto_box = box
+            rect = np.array([
+                [box.x, box.y], [box.x + box.w, box.y],
+                [box.x + box.w, box.y + box.h], [box.x, box.y + box.h], [box.x, box.y],
+            ], dtype=float)
+            self.image_view.set_plotbox_preview(rect)
+        except Exception:
+            self.image_view.set_plotbox_preview(None)
 
     # --- Click router -------------------------------------------------------
     def _on_image_click(self, x: float, y: float) -> None:
@@ -193,7 +235,7 @@ class MainWindow(QMainWindow):
         if self._mode == Mode.CALIBRATING:
             done = self.calib_panel.add_pixel_point(x, y)
             xs, ys = zip(*self.calib_panel.pixel_points()) if self.calib_panel.pixel_points() else ([], [])
-            self.image_view.set_calibration_markers(list(xs), list(ys))
+            self.image_view.set_calibration_markers(list(xs), list(ys), list(CalibrationPanel.LABELS))
             if done:
                 self.statusBar().showMessage("3 calibration points captured. Enter data values, then 'Solve calibration'.")
                 self._set_mode(Mode.IDLE)
@@ -213,13 +255,20 @@ class MainWindow(QMainWindow):
             )
             self._curves_dict[cid] = curve
             self.curve_panel.add_curve_card(curve)
-            self.image_view.set_curve_points(cid, np.empty(0), np.empty(0), curve.hsv_center, curve.visible)
+            self.image_view.set_curve_points(cid, np.empty(0), np.empty(0), curve.hsv_center, curve.visible, curve.display_color)
             
             self._selected_curve_id = cid
             self.curve_panel.set_card_selected(cid)
             
             self.statusBar().showMessage(f"Created '{curve.name}' with HSV={curve.hsv_center}")
             self._refresh_mask_overlay()
+        elif self._mode == Mode.SETTING_SEED:
+            cid = getattr(self, "_seed_target_curve_id", None)
+            if cid in self._curves_dict:
+                self._curves_dict[cid].seed_point = (x, y)
+                self.image_view.set_seed_marker(cid, x, y)
+                self.statusBar().showMessage(f"Start point set for '{self._curves_dict[cid].name}'.")
+            self._set_mode(Mode.IDLE)
 
     # --- Auto-Calibrate (OCR) ------------------------------------------------
     def _auto_calibrate(self) -> None:
@@ -294,7 +343,7 @@ class MainWindow(QMainWindow):
         self.calib_panel.set_pixel_points([origin_px, xmax_px, ymax_px])
         xs_markers = [origin_px[0], xmax_px[0], ymax_px[0]]
         ys_markers = [origin_px[1], xmax_px[1], ymax_px[1]]
-        self.image_view.set_calibration_markers(xs_markers, ys_markers)
+        self.image_view.set_calibration_markers(xs_markers, ys_markers, list(CalibrationPanel.LABELS))
 
         # Set data values
         self.calib_panel.set_axis_values(
@@ -384,15 +433,16 @@ class MainWindow(QMainWindow):
             )
             self._curves_dict[cid] = curve
             self.curve_panel.add_curve_card(curve)
-            self.image_view.set_curve_points(cid, np.empty(0), np.empty(0), (h, s, v), curve.visible)
+            self.image_view.set_curve_points(cid, np.empty(0), np.empty(0), (h, s, v), curve.visible, curve.display_color)
             count += 1
 
         self.statusBar().showMessage(f"Auto-detected {count} curve color(s).")
 
     # --- Calibration --------------------------------------------------------
-    def _solve_calibration(self) -> None:
+    def _solve_calibration(self, silent: bool = False) -> None:
         if not self.calib_panel.has_enough_pixel_points():
-            QMessageBox.warning(self, "Need 3 points", "Click required calibration points first.")
+            if not silent:
+                QMessageBox.warning(self, "Need 3 points", "Click required calibration points first.")
             return
         pixel_pts = np.array(self.calib_panel.pixel_points(), dtype=float)
         data_pts = np.array(self.calib_panel.data_points(), dtype=float)
@@ -413,9 +463,11 @@ class MainWindow(QMainWindow):
         err = calib_mod.round_trip_error(M, pixel_pts, data_pts)
         self._recompute_curve_data()
         self._draw_calibration_grid()
+        self.image_view.set_plotbox_preview(None)
         self.calib_panel.set_solved_status(True, f"max round-trip error = {err:.4g}")
         self.statusBar().showMessage(f"Calibration solved (err = {err:.4g}). Switch to Curves panel.")
-        QMessageBox.information(self, "Success", "Calibration solved successfully!\nA grid preview has been overlaid on your image.")
+        if not silent:
+            QMessageBox.information(self, "Success", "Calibration solved successfully!\nA grid preview has been overlaid on your image.")
 
     def _draw_calibration_grid(self) -> None:
         if self._calibration_M is None:
@@ -506,25 +558,26 @@ class MainWindow(QMainWindow):
         x_hi = min(w - 1, int(max(xs)))
         return (x_lo, y_lo, x_hi, y_hi)
 
-    def _on_extract_single(self, curve_id: int, dx: int, fill: bool, reducer: str, smooth: bool, smooth_window: int, poly_order: int, passes: int, upscale_factor: int) -> None:
+    def _on_extract_single(self, curve_id: int, dx: int, fill: bool, reducer: str, smooth: bool, smooth_window: int, poly_order: int, passes: int, upscale_factor: int, bestfit: bool, bestfit_degree: int) -> None:
         if curve_id not in self._curves_dict:
             return
         if self._calibration_M is None:
             QMessageBox.warning(self, "Not calibrated", "Solve calibration first before extracting.")
             return
-        self._run_xstep_for_curve(self._curves_dict[curve_id], dx, fill, reducer, smooth, smooth_window, poly_order, passes, upscale_factor)
-        
-    def _on_extract_all(self, dx: int, fill: bool, reducer: str, smooth: bool, smooth_window: int, poly_order: int, passes: int, upscale_factor: int) -> None:
+        self._run_xstep_for_curve(self._curves_dict[curve_id], dx, fill, reducer, smooth, smooth_window, poly_order, passes, upscale_factor, bestfit, bestfit_degree)
+
+    def _on_extract_all(self, dx: int, fill: bool, reducer: str, smooth: bool, smooth_window: int, poly_order: int, passes: int, upscale_factor: int, bestfit: bool, bestfit_degree: int) -> None:
         if self._calibration_M is None:
             QMessageBox.warning(self, "Not calibrated", "Solve calibration first before extracting.")
             return
         for c in self._curves_dict.values():
             if c.visible:
-                self._run_xstep_for_curve(c, dx, fill, reducer, smooth, smooth_window, poly_order, passes, upscale_factor)
+                self._run_xstep_for_curve(c, dx, fill, reducer, smooth, smooth_window, poly_order, passes, upscale_factor, bestfit, bestfit_degree)
 
     def _run_xstep_for_curve(self, curve: Curve, dx: int, fill: bool, reducer: str,
                              smooth: bool = False, smooth_window: int = 21,
-                             poly_order: int = 3, passes: int = 1, upscale_factor: int = 1) -> None:
+                             poly_order: int = 3, passes: int = 1, upscale_factor: int = 1,
+                             bestfit: bool = False, bestfit_degree: int = 3) -> None:
         if self._image_rgb is None:
             return
             
@@ -542,7 +595,11 @@ class MainWindow(QMainWindow):
                 mask[ex_y0:ex_y1, ex_x0:ex_x1] = 0
 
         bbox = self._calibration_bbox()
-        xs, ys = xstep.extract_curve(mask, dx=dx, bbox=bbox, reducer=reducer, upscale_factor=upscale_factor)
+        seed_x, seed_y = curve.seed_point if curve.seed_point is not None else (None, None)
+        xs, ys = xstep.extract_curve(
+            mask, dx=dx, bbox=bbox, reducer=reducer, upscale_factor=upscale_factor,
+            seed_x=seed_x, seed_y=seed_y,
+        )
         if xs.size < 2:
             self.statusBar().showMessage(f"X-Step found < 2 points for '{curve.name}'. Widen HSV tolerance.")
             return
@@ -560,7 +617,13 @@ class MainWindow(QMainWindow):
             if win >= 5 and poly >= 1:
                 for _ in range(passes):
                     ys = savgol_filter(ys, window_length=win, polyorder=poly)
-                
+
+        if bestfit:
+            try:
+                xs, ys = interpolate.polynomial_best_fit(xs, ys, bestfit_degree)
+            except ValueError as exc:
+                self.statusBar().showMessage(f"Best-fit skipped: {exc}")
+
         curve.pixel_xs = xs
         curve.pixel_ys = ys
         
@@ -570,7 +633,7 @@ class MainWindow(QMainWindow):
             curve.data_xs = pts_data[:, 0]
             curve.data_ys = pts_data[:, 1]
             
-        self.image_view.set_curve_points(curve.id, xs, ys, curve.hsv_center, curve.visible)
+        self.image_view.set_curve_points(curve.id, xs, ys, curve.hsv_center, curve.visible, curve.display_color)
         self.statusBar().showMessage(f"Extracted {xs.size} points for '{curve.name}'.")
 
     def _delete_curve(self, curve_id: int) -> None:
@@ -591,11 +654,38 @@ class MainWindow(QMainWindow):
     def _on_curve_visibility_changed(self, curve_id: int, visible: bool) -> None:
         if curve_id in self._curves_dict:
             self._curves_dict[curve_id].visible = visible
-            self.image_view.set_curve_points(curve_id, self._curves_dict[curve_id].pixel_xs, self._curves_dict[curve_id].pixel_ys, self._curves_dict[curve_id].hsv_center, visible)
+            c = self._curves_dict[curve_id]
+            self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, visible, c.display_color)
 
     def _on_curve_name_changed(self, curve_id: int, name: str) -> None:
         if curve_id in self._curves_dict:
             self._curves_dict[curve_id].name = name
+
+    def _on_curve_hsv_changed(self, curve_id: int, hsv: tuple) -> None:
+        if curve_id not in self._curves_dict:
+            return
+        c = self._curves_dict[curve_id]
+        c.hsv_center = hsv
+        self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
+        if self._selected_curve_id == curve_id:
+            self._refresh_mask_overlay()
+
+    def _on_curve_display_color_changed(self, curve_id: int, rgb: tuple) -> None:
+        if curve_id not in self._curves_dict:
+            return
+        c = self._curves_dict[curve_id]
+        c.display_color = rgb
+        self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
+
+    def _on_set_seed_requested(self, curve_id: int) -> None:
+        if curve_id not in self._curves_dict:
+            return
+        if self._image_rgb is None:
+            QMessageBox.warning(self, "No image", "Open an image first.")
+            return
+        self._seed_target_curve_id = curve_id
+        self._set_mode(Mode.SETTING_SEED)
+        self.statusBar().showMessage("Click the graph to set this curve's start point.")
 
     # --- Export -------------------------------------------------------------
     def _selected_curve(self) -> Curve | None:

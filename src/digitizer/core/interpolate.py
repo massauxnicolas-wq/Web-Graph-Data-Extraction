@@ -25,6 +25,19 @@ def fill_gaps(xs: np.ndarray, ys: np.ndarray, x_grid: np.ndarray) -> np.ndarray:
     return interp(grid)
 
 
+def polynomial_best_fit(
+    xs: np.ndarray, ys: np.ndarray, degree: int, num: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Least-squares polynomial regression through (xs, ys), resampled on a uniform grid."""
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    if xs.size < degree + 1:
+        raise ValueError(f"need >= {degree + 1} points to fit a degree-{degree} polynomial")
+    coeffs = np.polyfit(xs, ys, degree)
+    x_grid = np.linspace(xs.min(), xs.max(), num or xs.size)
+    return x_grid, np.polyval(coeffs, x_grid)
+
+
 def uniform_grid(xs: np.ndarray, step: float = 1.0) -> np.ndarray:
     xs = np.asarray(xs, dtype=float)
     return np.arange(xs.min(), xs.max() + step / 2, step)

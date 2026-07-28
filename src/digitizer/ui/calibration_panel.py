@@ -30,6 +30,8 @@ class CalibrationPanel(QWidget):
     reset_requested = pyqtSignal()
     auto_calibrate_requested = pyqtSignal()
     debug_overlay_requested = pyqtSignal()
+    points_changed = pyqtSignal(list)  # emitted when captured points are changed other than by a fresh click
+    grid_visibility_toggled = pyqtSignal(bool)
 
     LABELS = ("Origin", "X-axis max", "Y-axis max", "Top-Right (Optional)")
 
@@ -83,34 +85,43 @@ class CalibrationPanel(QWidget):
         layout.addWidget(separator)
 
         # --- Manual Calibration Section ---
+        manual_box = QGroupBox("Manual Calibration")
+        manual_layout = QVBoxLayout(manual_box)
+
         instructions = QLabel(
-            "<h3>Manual Calibration</h3>"
-            "<ol>"
-            "<li>Click <b>'Capture'</b> to begin.</li>"
-            "<li>Click points on the graph: <b>Origin</b>, <b>X-max</b>, <b>Y-max</b>. If 4-point is enabled, click <b>Top-Right</b> last.</li>"
-            "<li>Enter the exact plot-axis data values below.</li>"
-            "<li>Press <b>'Solve calibration'</b> to finish.</li>"
-            "</ol>"
+            "Click <b>Capture</b>, then click Origin, X-max, Y-max on the graph "
+            "(in that order), enter the axis values below, and press <b>Solve</b>."
         )
-        instructions.setStyleSheet("QLabel { font-size: 13px; line-height: 1.5; }")
+        instructions.setStyleSheet("QLabel { font-size: 12px; color: #555; }")
         instructions.setWordWrap(True)
-        layout.addWidget(instructions)
+        manual_layout.addWidget(instructions)
 
         self._four_point_cb = QCheckBox("Enable 4-Point Calibration (Skewed Image)")
         self._four_point_cb.toggled.connect(self._on_four_point_toggled)
-        layout.addWidget(self._four_point_cb)
+        manual_layout.addWidget(self._four_point_cb)
 
         self._capture_btn = QPushButton("Capture calibration points")
         self._capture_btn.setCheckable(True)
+        self._capture_btn.setStyleSheet(
+            "QPushButton { font-size: 14px; font-weight: bold; padding: 8px; }"
+        )
         self._capture_btn.clicked.connect(self._on_capture_toggle)
-        layout.addWidget(self._capture_btn)
+        manual_layout.addWidget(self._capture_btn)
 
         self._status = QLabel(f"Click points: 0/{self._target_count}")
-        layout.addWidget(self._status)
+        manual_layout.addWidget(self._status)
 
-        # Captured pixel coordinates (display only)
+        layout.addWidget(manual_box)
+
+        # Captured pixel coordinates (display only, collapsed by default)
         pix_box = QGroupBox("Captured pixels")
-        pix_grid = QGridLayout(pix_box)
+        pix_box.setCheckable(True)
+        pix_box.setChecked(False)
+        pix_outer = QVBoxLayout(pix_box)
+        pix_content = QWidget()
+        pix_content.setVisible(False)
+        pix_box.toggled.connect(pix_content.setVisible)
+        pix_grid = QGridLayout(pix_content)
         pix_grid.addWidget(QLabel("Point"), 0, 0)
         pix_grid.addWidget(QLabel("Pixel (x, y)"), 0, 1)
         self._pixel_labels: list[QLabel] = []
@@ -119,45 +130,47 @@ class CalibrationPanel(QWidget):
             lbl = QLabel("—")
             self._pixel_labels.append(lbl)
             pix_grid.addWidget(lbl, row, 1)
+        pix_outer.addWidget(pix_content)
         layout.addWidget(pix_box)
 
-        # Plot-axis values
+        # Plot-axis values — min and max always visible for both axes
         val_box = QGroupBox("Plot-axis values")
         form = QFormLayout(val_box)
-
-        self._x_max = QDoubleSpinBox()
-        self._x_max.setRange(-1e9, 1e9)
-        self._x_max.setDecimals(6)
-        self._x_max.setValue(1.0)
-        self._x_max.setToolTip("Plot value on the X-axis at the second clicked point")
-        form.addRow("X-axis max value:", self._x_max)
-
-        self._y_max = QDoubleSpinBox()
-        self._y_max.setRange(-1e9, 1e9)
-        self._y_max.setDecimals(6)
-        self._y_max.setValue(1.0)
-        self._y_max.setToolTip("Plot value on the Y-axis at the third clicked point")
-        form.addRow("Y-axis max value:", self._y_max)
-
-        self._advanced_cb = QCheckBox("Override origin (advanced)")
-        self._advanced_cb.toggled.connect(self._on_advanced_toggle)
-        form.addRow(self._advanced_cb)
 
         self._x_origin = QDoubleSpinBox()
         self._x_origin.setRange(-1e9, 1e9)
         self._x_origin.setDecimals(6)
         self._x_origin.setValue(0.0)
-        self._x_origin.setEnabled(False)
-        form.addRow("X-axis origin value:", self._x_origin)
+        self._x_origin.setToolTip("Plot value on the X-axis at the Origin point")
+        form.addRow("X-axis min value:", self._x_origin)
+
+        self._x_max = QDoubleSpinBox()
+        self._x_max.setRange(-1e9, 1e9)
+        self._x_max.setDecimals(6)
+        self._x_max.setValue(1.0)
+        self._x_max.setToolTip("Plot value on the X-axis at the X-max point")
+        form.addRow("X-axis max value:", self._x_max)
 
         self._y_origin = QDoubleSpinBox()
         self._y_origin.setRange(-1e9, 1e9)
         self._y_origin.setDecimals(6)
         self._y_origin.setValue(0.0)
-        self._y_origin.setEnabled(False)
-        form.addRow("Y-axis origin value:", self._y_origin)
+        self._y_origin.setToolTip("Plot value on the Y-axis at the Origin point")
+        form.addRow("Y-axis min value:", self._y_origin)
+
+        self._y_max = QDoubleSpinBox()
+        self._y_max.setRange(-1e9, 1e9)
+        self._y_max.setDecimals(6)
+        self._y_max.setValue(1.0)
+        self._y_max.setToolTip("Plot value on the Y-axis at the Y-max point")
+        form.addRow("Y-axis max value:", self._y_max)
 
         layout.addWidget(val_box)
+
+        self._grid_cb = QCheckBox("Show grid")
+        self._grid_cb.setChecked(True)
+        self._grid_cb.toggled.connect(self.grid_visibility_toggled)
+        layout.addWidget(self._grid_cb)
 
         btns = QHBoxLayout()
         self._solve_btn = QPushButton("Solve calibration")
@@ -173,10 +186,6 @@ class CalibrationPanel(QWidget):
         layout.addWidget(self._error_label)
         layout.addStretch(1)
 
-    def _on_advanced_toggle(self, on: bool) -> None:
-        self._x_origin.setEnabled(on)
-        self._y_origin.setEnabled(on)
-
     def _on_capture_toggle(self, checked: bool) -> None:
         if checked:
             self._capture_btn.setText("Capturing... (cancel)")
@@ -186,12 +195,16 @@ class CalibrationPanel(QWidget):
             self.cancel_capture.emit()
 
     def _on_reset(self) -> None:
+        self.reset()
+        self.reset_requested.emit()
+
+    def reset(self) -> None:
+        """Clear captured points and status. Does not emit reset_requested."""
         self._captured.clear()
         for lbl in self._pixel_labels:
             lbl.setText("—")
         self._status.setText(f"Click points: 0/{self._target_count}")
         self._error_label.setText("Calibration: not solved")
-        self.reset_requested.emit()
 
     def add_pixel_point(self, x: float, y: float) -> bool:
         if len(self._captured) >= self._target_count:
@@ -208,6 +221,7 @@ class CalibrationPanel(QWidget):
         self._target_count = 4 if checked else 3
         if len(self._captured) > self._target_count:
             self._captured = self._captured[:self._target_count]
+            self.points_changed.emit(list(self._captured))
         self._update_ui_for_points()
 
     def set_pixel_points(self, pts: list[tuple[float, float]]) -> None:
@@ -220,7 +234,11 @@ class CalibrationPanel(QWidget):
                 lbl.setText(f"({self._captured[i][0]:.1f}, {self._captured[i][1]:.1f})")
             else:
                 lbl.setText("—")
-        self._status.setText(f"Click points: {len(self._captured)}/{self._target_count}")
+        if len(self._captured) < self._target_count:
+            next_label = self.LABELS[len(self._captured)]
+            self._status.setText(f"Click point {len(self._captured) + 1}/{self._target_count}: {next_label}")
+        else:
+            self._status.setText("All points captured. Drag a marker to adjust, or Solve.")
 
     def pixel_points(self) -> list[tuple[float, float]]:
         return list(self._captured)
@@ -263,7 +281,6 @@ class CalibrationPanel(QWidget):
 
     def set_axis_values(self, x_origin: float, y_origin: float, x_max: float, y_max: float) -> None:
         """Programmatically set the axis value spinboxes."""
-        self._advanced_cb.setChecked(True)  # Enable origin override
         self._x_origin.setValue(x_origin)
         self._y_origin.setValue(y_origin)
         self._x_max.setValue(x_max)

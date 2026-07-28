@@ -59,6 +59,16 @@ def test_midpoint_picks_run_closest_to_seed():
     assert ys[0] == pytest.approx(5.0)
 
 
+@pytest.mark.parametrize("reducer", ["trace", "centroid"])
+def test_seed_x_picks_correct_branch_over_a_decoy_blob(reducer):
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[10, 2:18] = True   # the real curve, a flat line at y=10
+    mask[3, 2:6] = True     # a decoy blob near the left edge (e.g. a marker/legend swatch)
+    xs, ys = extract_curve(mask, reducer=reducer, seed_x=10, seed_y=10, max_jump=5)
+    assert xs.size > 0
+    assert abs(ys[0] - 10) < 1
+
+
 def test_upscale_factor_returns_same_pixel_scale():
     mask = _line_mask()
     xs1, ys1 = extract_curve(mask, dx=2, reducer="mean", upscale_factor=1)

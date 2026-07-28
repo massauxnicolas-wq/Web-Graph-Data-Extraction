@@ -20,7 +20,7 @@ def _runs_in_column(col: np.ndarray) -> list[tuple[int, int]]:
 def _extract_trace(
     mask: np.ndarray,
     x_min: int, y_min: int, x_max: int, y_max: int,
-    seed_y: float | None, dx: int, max_jump: float | None,
+    seed_y: float | None, seed_x: float | None, dx: int, max_jump: float | None,
 ) -> tuple[list[float], list[float]]:
     """Path-trace via greedy nearest-neighbor walk. Best for steep/vertical/looping curves."""
     y_idx, x_idx = np.where(mask[y_min:y_max + 1, x_min:x_max + 1])
@@ -31,7 +31,14 @@ def _extract_trace(
     y_idx = y_idx + y_min
     points = np.column_stack((x_idx, y_idx))
 
-    if seed_y is not None:
+    if seed_x is not None:
+        # Forced start: nearest mask point to the user-picked (seed_x, seed_y),
+        # instead of always starting at the leftmost column (which a decoy
+        # blob/marker/legend swatch near the edge could otherwise hijack).
+        sy = seed_y if seed_y is not None else (y_min + y_max) / 2.0
+        dists = np.hypot(points[:, 0] - seed_x, points[:, 1] - sy)
+        curr = int(np.argmin(dists))
+    elif seed_y is not None:
         left_points = points[points[:, 0] == np.min(points[:, 0])]
         start_idx = np.argmin(np.abs(left_points[:, 1] - seed_y))
         start_point = left_points[start_idx]
@@ -92,13 +99,20 @@ def _extract_trace(
 def _extract_centroid(
     mask: np.ndarray,
     x_min: int, y_min: int, x_max: int, y_max: int,
-    seed_y: float | None, dx: int, window_size: int,
+    seed_y: float | None, seed_x: float | None, dx: int, window_size: int,
 ) -> tuple[list[float], list[float]]:
     """Fixed arc-length stepping along the local centroid direction."""
     xs: list[float] = []
     ys: list[float] = []
 
-    if seed_y is not None:
+    if seed_x is not None:
+        cur_x = float(min(max(seed_x, x_min), x_max))
+        if seed_y is not None:
+            cur_y = float(seed_y)
+        else:
+            col = mask[y_min:y_max + 1, int(round(cur_x))]
+            cur_y = float(np.median(np.where(col)[0])) + y_min if col.any() else (y_min + y_max) / 2.0
+    elif seed_y is not None:
         cur_y = float(seed_y)
         cur_x = float(x_min)
     else:
@@ -203,6 +217,7 @@ def extract_curve(
     dx: int = 2,
     bbox: tuple[int, int, int, int] | None = None,
     seed_y: int | None = None,
+    seed_x: int | None = None,
     reducer: str = "mean",
     max_jump: float | None = 50.0,
     window_size: int = 20,
@@ -232,6 +247,8 @@ def extract_curve(
         window_size *= upscale_factor
         if seed_y is not None:
             seed_y *= upscale_factor
+        if seed_x is not None:
+            seed_x *= upscale_factor
         if max_jump is not None:
             max_jump *= upscale_factor
 
@@ -244,9 +261,9 @@ def extract_curve(
         x_max, y_max = min(w - 1, x_max), min(h - 1, y_max)
 
     if reducer == "trace":
-        xs, ys = _extract_trace(mask, x_min, y_min, x_max, y_max, seed_y, dx, max_jump)
+        xs, ys = _extract_trace(mask, x_min, y_min, x_max, y_max, seed_y, seed_x, dx, max_jump)
     elif reducer == "centroid":
-        xs, ys = _extract_centroid(mask, x_min, y_min, x_max, y_max, seed_y, dx, window_size)
+        xs, ys = _extract_centroid(mask, x_min, y_min, x_max, y_max, seed_y, seed_x, dx, window_size)
     else:
         xs, ys = _extract_column_scan(mask, x_min, y_min, x_max, y_max, seed_y, dx, reducer)
 

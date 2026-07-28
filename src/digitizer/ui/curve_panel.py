@@ -5,8 +5,10 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QGroupBox,
     QHBoxLayout,
@@ -33,6 +35,8 @@ class Curve:
     pixel_ys: np.ndarray = field(default_factory=lambda: np.empty(0))
     data_xs: np.ndarray = field(default_factory=lambda: np.empty(0))
     data_ys: np.ndarray = field(default_factory=lambda: np.empty(0))
+    display_color: tuple[int, int, int] | None = None
+    seed_point: tuple[float, float] | None = None
 
 
 class CurveCard(QFrame):
@@ -40,28 +44,52 @@ class CurveCard(QFrame):
     visibility_toggled = pyqtSignal(int, bool)
     name_changed = pyqtSignal(int, str)
     select_requested = pyqtSignal(int)
-    
+    hsv_color_changed = pyqtSignal(int, tuple)
+    display_color_changed = pyqtSignal(int, tuple)
+    set_seed_requested = pyqtSignal(int)
+
     def __init__(self, curve: Curve, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.curve_id = curve.id
+        self._curve_hsv = curve.hsv_center
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
-        
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        
+
         cid = curve.id  # capture for lambdas
-        
-        # Color block
-        self.color_lbl = QLabel()
-        self.color_lbl.setFixedSize(20, 20)
+
+        # Mask-sample color (also used for extraction HSV center)
+        self.color_btn = QPushButton()
+        self.color_btn.setFixedSize(20, 20)
+        self.color_btn.setToolTip("Change mask-sample color")
+        self.color_btn.clicked.connect(self._pick_mask_color)
         self.update_color(curve.hsv_center)
-        layout.addWidget(self.color_lbl)
-        
+        layout.addWidget(self.color_btn)
+
+        # On-canvas display color (visualization only)
+        self.display_btn = QPushButton()
+        self.display_btn.setFixedSize(20, 20)
+        self.display_btn.setToolTip("Change on-canvas display color")
+        self.display_btn.clicked.connect(self._pick_display_color)
+        self._set_display_swatch(curve.display_color)
+        layout.addWidget(self.display_btn)
+
         # Name
         self.name_edit = QLineEdit(curve.name)
         self.name_edit.textChanged.connect(lambda t: self.name_changed.emit(self.curve_id, t))
         layout.addWidget(self.name_edit, 1)
-        
+
+        # Seed point
+        self.seed_btn = QPushButton("🎯")
+        self.seed_btn.setFixedSize(30, 24)
+        self.seed_btn.setToolTip(
+            "Click, then click the graph to force the curve's start point.\n"
+            "Only affects the Centroid and Path Trace reducers."
+        )
+        self.seed_btn.clicked.connect(lambda _=None, c=cid: self.set_seed_requested.emit(c))
+        layout.addWidget(self.seed_btn)
+
         # Visibility
         self.vis_btn = QPushButton("👁️")
         self.vis_btn.setCheckable(True)
@@ -69,17 +97,43 @@ class CurveCard(QFrame):
         self.vis_btn.setFixedSize(30, 24)
         self.vis_btn.clicked.connect(lambda _=None, c=cid: self.visibility_toggled.emit(c, self.vis_btn.isChecked()))
         layout.addWidget(self.vis_btn)
-        
+
         # Delete
         self.del_btn = QPushButton("❌")
         self.del_btn.setFixedSize(30, 24)
         self.del_btn.clicked.connect(lambda _=None, c=cid: self.delete_requested.emit(c))
         layout.addWidget(self.del_btn)
-        
+
     def update_color(self, hsv: tuple[int, int, int]) -> None:
+        self._curve_hsv = hsv
         pixel = np.uint8([[[hsv[0], hsv[1], hsv[2]]]])
         rgb = cv2.cvtColor(pixel, cv2.COLOR_HSV2RGB)[0][0]
-        self.color_lbl.setStyleSheet(f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); border: 1px solid #888;")
+        self.color_btn.setStyleSheet(f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); border: 1px solid #888;")
+
+    def _set_display_swatch(self, rgb: tuple[int, int, int] | None) -> None:
+        if rgb is None:
+            self.display_btn.setStyleSheet("background-color: transparent; border: 1px dashed #888;")
+        else:
+            self.display_btn.setStyleSheet(f"background-color: rgb{tuple(rgb)}; border: 1px solid #888;")
+
+    def _pick_mask_color(self) -> None:
+        h, s, v = self._curve_hsv
+        rgb = cv2.cvtColor(np.uint8([[[h, s, v]]]), cv2.COLOR_HSV2RGB)[0][0]
+        color = QColorDialog.getColor(QColor(int(rgb[0]), int(rgb[1]), int(rgb[2])), self, "Pick mask sample color")
+        if not color.isValid():
+            return
+        hsv2 = cv2.cvtColor(np.uint8([[[color.red(), color.green(), color.blue()]]]), cv2.COLOR_RGB2HSV)[0][0]
+        new_hsv = tuple(int(x) for x in hsv2)
+        self.update_color(new_hsv)
+        self.hsv_color_changed.emit(self.curve_id, new_hsv)
+
+    def _pick_display_color(self) -> None:
+        color = QColorDialog.getColor(parent=self, title="Pick display color")
+        if not color.isValid():
+            return
+        rgb = (color.red(), color.green(), color.blue())
+        self._set_display_swatch(rgb)
+        self.display_color_changed.emit(self.curve_id, rgb)
 
     def set_selected(self, selected: bool) -> None:
         if selected:
@@ -107,12 +161,15 @@ class CurvePanel(QWidget):
     auto_detect_curves_requested = pyqtSignal()
     
     # Manager signals
-    extract_curve_requested = pyqtSignal(int, int, bool, str, bool, int, int, int, int)  # curve_id, dx, fill, reducer, smooth, window, poly, passes, upscale
-    extract_all_requested = pyqtSignal(int, bool, str, bool, int, int, int, int)
+    extract_curve_requested = pyqtSignal(int, int, bool, str, bool, int, int, int, int, bool, int)  # curve_id, dx, fill, reducer, smooth, window, poly, passes, upscale, bestfit, degree
+    extract_all_requested = pyqtSignal(int, bool, str, bool, int, int, int, int, bool, int)
     delete_curve_requested = pyqtSignal(int)
     select_curve_changed = pyqtSignal(int)
     curve_visibility_changed = pyqtSignal(int, bool)
     curve_name_changed = pyqtSignal(int, str)
+    curve_hsv_changed = pyqtSignal(int, tuple)
+    curve_display_color_changed = pyqtSignal(int, tuple)
+    set_seed_requested = pyqtSignal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -138,10 +195,17 @@ class CurvePanel(QWidget):
         layout.addWidget(self._sample_lbl)
 
         slider_box = QGroupBox("Global HSV Tolerance (Applies to Extraction)")
-        sl = QVBoxLayout(slider_box)
+        slider_box.setCheckable(True)
+        slider_box.setChecked(False)
+        slider_outer = QVBoxLayout(slider_box)
+        slider_content = QWidget()
+        slider_content.setVisible(False)
+        slider_box.toggled.connect(slider_content.setVisible)
+        sl = QVBoxLayout(slider_content)
         self._h_slider, self._h_lbl = self._make_slider("H ±", 0, 90, 2, sl)
         self._s_slider, self._s_lbl = self._make_slider("S ±", 0, 255, 15, sl)
         self._v_slider, self._v_lbl = self._make_slider("V ±", 0, 255, 15, sl)
+        slider_outer.addWidget(slider_content)
         layout.addWidget(slider_box)
 
         self._overlay_cb = QCheckBox("Show mask overlay")
@@ -149,9 +213,16 @@ class CurvePanel(QWidget):
         self._overlay_cb.toggled.connect(self.overlay_toggled.emit)
         layout.addWidget(self._overlay_cb)
 
+        exclusion_row = QHBoxLayout()
         self._exclusion_cb = QCheckBox("Show exclusion box (ignore legend)")
         self._exclusion_cb.toggled.connect(self.exclusion_toggled.emit)
-        layout.addWidget(self._exclusion_cb)
+        exclusion_row.addWidget(self._exclusion_cb, 1)
+        self._exclusion_thumb = QLabel()
+        self._exclusion_thumb.setFixedSize(60, 60)
+        self._exclusion_thumb.setStyleSheet("QLabel { border: 1px solid #888; background: #eee; }")
+        self._exclusion_thumb.setScaledContents(True)
+        exclusion_row.addWidget(self._exclusion_thumb)
+        layout.addLayout(exclusion_row)
 
         run_box = QGroupBox("Extraction Settings")
         run_layout = QVBoxLayout(run_box)
@@ -213,6 +284,18 @@ class CurvePanel(QWidget):
         smooth_row.addWidget(self._smooth_passes)
         run_layout.addLayout(smooth_row)
 
+        self._bestfit_cb = QCheckBox("Best-fit (polynomial regression)")
+        self._bestfit_cb.setToolTip("Fits a single polynomial through all extracted points\ninstead of interpolating between them.")
+        run_layout.addWidget(self._bestfit_cb)
+
+        bestfit_row = QHBoxLayout()
+        bestfit_row.addWidget(QLabel("Degree:"))
+        self._bestfit_degree = QSpinBox()
+        self._bestfit_degree.setRange(1, 10)
+        self._bestfit_degree.setValue(3)
+        bestfit_row.addWidget(self._bestfit_degree)
+        run_layout.addLayout(bestfit_row)
+
         layout.addWidget(run_box)
 
         list_box = QGroupBox("Curve Manager")
@@ -259,6 +342,9 @@ class CurvePanel(QWidget):
         card.visibility_toggled.connect(self.curve_visibility_changed.emit)
         card.name_changed.connect(self.curve_name_changed.emit)
         card.select_requested.connect(self.select_curve_changed.emit)
+        card.hsv_color_changed.connect(self.curve_hsv_changed.emit)
+        card.display_color_changed.connect(self.curve_display_color_changed.emit)
+        card.set_seed_requested.connect(self.set_seed_requested.emit)
         self.scroll_layout.addWidget(card)
         self._cards[curve.id] = card
         self.select_curve_changed.emit(curve.id)
@@ -284,7 +370,9 @@ class CurvePanel(QWidget):
             self._smooth_window.value(),
             self._smooth_poly.value(),
             self._smooth_passes.value(),
-            self._upscale_spin.value()
+            self._upscale_spin.value(),
+            self._bestfit_cb.isChecked(),
+            self._bestfit_degree.value(),
         )
 
     def _on_extract_all(self) -> None:
@@ -297,8 +385,16 @@ class CurvePanel(QWidget):
             self._smooth_window.value(),
             self._smooth_poly.value(),
             self._smooth_passes.value(),
-            self._upscale_spin.value()
+            self._upscale_spin.value(),
+            self._bestfit_cb.isChecked(),
+            self._bestfit_degree.value(),
         )
 
     def uncheck_sample_button(self) -> None:
         self._sample_btn.setChecked(False)
+
+    def set_exclusion_thumbnail(self, pixmap) -> None:
+        if pixmap is None:
+            self._exclusion_thumb.clear()
+            return
+        self._exclusion_thumb.setPixmap(pixmap)

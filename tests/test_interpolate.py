@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from digitizer.core.interpolate import fill_gaps, fill_gaps_parametric, uniform_grid
+from digitizer.core.interpolate import fill_gaps, fill_gaps_parametric, polynomial_best_fit, uniform_grid
 
 
 def test_fill_gaps_linear_interpolation():
@@ -33,6 +33,27 @@ def test_fill_gaps_dedups_duplicate_x():
     ys = [0, 5, 100]
     out = fill_gaps(xs, ys, x_grid=[5])
     np.testing.assert_allclose(out, [50])
+
+
+def test_polynomial_best_fit_recovers_a_parabola():
+    xs = np.linspace(0, 10, 50)
+    ys = 2 * xs**2 - 3 * xs + 1
+    out_x, out_y = polynomial_best_fit(xs, ys, degree=2)
+    expected = 2 * out_x**2 - 3 * out_x + 1
+    np.testing.assert_allclose(out_y, expected, atol=1e-6)
+
+
+def test_polynomial_best_fit_smooths_noisy_line():
+    xs = np.linspace(0, 10, 100)
+    ys = 3 * xs + 5 + np.array([(-1) ** i * 0.5 for i in range(100)])  # small alternating noise
+    out_x, out_y = polynomial_best_fit(xs, ys, degree=1)
+    expected = 3 * out_x + 5
+    assert np.max(np.abs(out_y - expected)) < 0.5
+
+
+def test_polynomial_best_fit_rejects_too_few_points():
+    with pytest.raises(ValueError, match=">="):
+        polynomial_best_fit([0, 1], [0, 1], degree=3)
 
 
 def test_uniform_grid_spans_min_to_max():
