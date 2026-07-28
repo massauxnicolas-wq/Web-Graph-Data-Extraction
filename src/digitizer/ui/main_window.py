@@ -60,6 +60,7 @@ class Mode(Enum):
     CALIBRATING = auto()
     PICKING_COLOR = auto()
     SETTING_SEED = auto()
+    SETTING_END = auto()
 
 
 class MainWindow(QMainWindow):
@@ -110,6 +111,7 @@ class MainWindow(QMainWindow):
         self.curve_panel.curve_hsv_changed.connect(self._on_curve_hsv_changed)
         self.curve_panel.curve_display_color_changed.connect(self._on_curve_display_color_changed)
         self.curve_panel.set_seed_requested.connect(self._on_set_seed_requested)
+        self.curve_panel.set_end_requested.connect(self._on_set_end_requested)
 
         self.export_panel = ExportPanel()
         self.export_panel.export_csv_active.connect(self._export_csv_active)
@@ -147,7 +149,7 @@ class MainWindow(QMainWindow):
     def _set_mode(self, mode: Mode) -> None:
         self._mode = mode
         self.statusBar().showMessage(f"Mode: {mode.name}")
-        active = mode in (Mode.CALIBRATING, Mode.PICKING_COLOR, Mode.SETTING_SEED)
+        active = mode in (Mode.CALIBRATING, Mode.PICKING_COLOR, Mode.SETTING_SEED, Mode.SETTING_END)
         self.image_view.setCursor(Qt.CursorShape.CrossCursor if active else Qt.CursorShape.ArrowCursor)
 
     def _on_calib_points_changed(self, pts: list[tuple[float, float]]) -> None:
@@ -268,6 +270,13 @@ class MainWindow(QMainWindow):
                 self._curves_dict[cid].seed_point = (x, y)
                 self.image_view.set_seed_marker(cid, x, y)
                 self.statusBar().showMessage(f"Start point set for '{self._curves_dict[cid].name}'.")
+            self._set_mode(Mode.IDLE)
+        elif self._mode == Mode.SETTING_END:
+            cid = getattr(self, "_seed_target_curve_id", None)
+            if cid in self._curves_dict:
+                self._curves_dict[cid].end_point = (x, y)
+                self.image_view.set_end_marker(cid, x, y)
+                self.statusBar().showMessage(f"End point set for '{self._curves_dict[cid].name}'.")
             self._set_mode(Mode.IDLE)
 
     # --- Auto-Calibrate (OCR) ------------------------------------------------
@@ -596,9 +605,10 @@ class MainWindow(QMainWindow):
 
         bbox = self._calibration_bbox()
         seed_x, seed_y = curve.seed_point if curve.seed_point is not None else (None, None)
+        end_x = curve.end_point[0] if curve.end_point is not None else None
         xs, ys = xstep.extract_curve(
             mask, dx=dx, bbox=bbox, reducer=reducer, upscale_factor=upscale_factor,
-            seed_x=seed_x, seed_y=seed_y,
+            seed_x=seed_x, seed_y=seed_y, end_x=end_x,
         )
         if xs.size < 2:
             self.statusBar().showMessage(f"X-Step found < 2 points for '{curve.name}'. Widen HSV tolerance.")
@@ -686,6 +696,16 @@ class MainWindow(QMainWindow):
         self._seed_target_curve_id = curve_id
         self._set_mode(Mode.SETTING_SEED)
         self.statusBar().showMessage("Click the graph to set this curve's start point.")
+
+    def _on_set_end_requested(self, curve_id: int) -> None:
+        if curve_id not in self._curves_dict:
+            return
+        if self._image_rgb is None:
+            QMessageBox.warning(self, "No image", "Open an image first.")
+            return
+        self._seed_target_curve_id = curve_id
+        self._set_mode(Mode.SETTING_END)
+        self.statusBar().showMessage("Click the graph to set this curve's end point.")
 
     # --- Export -------------------------------------------------------------
     def _selected_curve(self) -> Curve | None:

@@ -31,6 +31,7 @@ class ImageView(pg.GraphicsLayoutWidget):
 
         self.calib_targets: list[pg.TargetItem] = []
         self.seed_markers: dict[int, pg.TargetItem] = {}
+        self.end_markers: dict[int, pg.TargetItem] = {}
         self.plotbox_preview: pg.PlotCurveItem | None = None
 
         self.grid_curves: list[pg.PlotCurveItem] = []
@@ -55,6 +56,8 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.set_plotbox_preview(None)
         for cid in list(self.seed_markers):
             self.set_seed_marker(cid, None, None)
+        for cid in list(self.end_markers):
+            self.set_end_marker(cid, None, None)
 
     def set_mask_overlay(self, rgba: np.ndarray | None) -> None:
         if rgba is None:
@@ -104,6 +107,7 @@ class ImageView(pg.GraphicsLayoutWidget):
             scatter = self.curve_scatters.pop(curve_id)
             self.view.removeItem(scatter)
         self.set_seed_marker(curve_id, None, None)
+        self.set_end_marker(curve_id, None, None)
 
     def clear_all_curves(self) -> None:
         for scatter in self.curve_scatters.values():
@@ -132,16 +136,26 @@ class ImageView(pg.GraphicsLayoutWidget):
             self.view.addItem(t)
             self.calib_targets.append(t)
 
-    def set_seed_marker(self, curve_id: int, x: float | None, y: float | None) -> None:
-        """Show (or clear, if x/y is None) a curve's forced start-point marker."""
-        if curve_id in self.seed_markers:
-            self.view.removeItem(self.seed_markers.pop(curve_id))
+    def _set_point_marker(
+        self, markers: dict[int, pg.TargetItem], curve_id: int,
+        x: float | None, y: float | None, symbol: str, color,
+    ) -> None:
+        if curve_id in markers:
+            self.view.removeItem(markers.pop(curve_id))
         if x is None or y is None:
             return
-        t = pg.TargetItem(pos=(x, y), size=14, symbol="star", pen=pg.mkPen("m", width=2), movable=False)
+        t = pg.TargetItem(pos=(x, y), size=14, symbol=symbol, pen=pg.mkPen(color, width=2), movable=False)
         t.setZValue(11)
         self.view.addItem(t)
-        self.seed_markers[curve_id] = t
+        markers[curve_id] = t
+
+    def set_seed_marker(self, curve_id: int, x: float | None, y: float | None) -> None:
+        """Show (or clear, if x/y is None) a curve's forced start-point marker."""
+        self._set_point_marker(self.seed_markers, curve_id, x, y, "star", "m")
+
+    def set_end_marker(self, curve_id: int, x: float | None, y: float | None) -> None:
+        """Show (or clear, if x/y is None) a curve's forced end-point marker."""
+        self._set_point_marker(self.end_markers, curve_id, x, y, "s", (255, 140, 0))
 
     def set_plotbox_preview(self, rect_pixels: np.ndarray | None) -> None:
         """Show (or clear, if None) a green outline of the auto-detected plot box."""

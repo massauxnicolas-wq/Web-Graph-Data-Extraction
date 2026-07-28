@@ -218,6 +218,7 @@ def extract_curve(
     bbox: tuple[int, int, int, int] | None = None,
     seed_y: int | None = None,
     seed_x: int | None = None,
+    end_x: float | None = None,
     reducer: str = "mean",
     max_jump: float | None = 50.0,
     window_size: int = 20,
@@ -273,5 +274,10 @@ def extract_curve(
     if upscale_factor > 1:
         xs_out /= upscale_factor
         ys_out /= upscale_factor
+
+    if end_x is not None:
+        keep = xs_out <= end_x
+        xs_out = xs_out[keep]
+        ys_out = ys_out[keep]
 
     return xs_out, ys_out

@@ -37,6 +37,7 @@ class Curve:
     data_ys: np.ndarray = field(default_factory=lambda: np.empty(0))
     display_color: tuple[int, int, int] | None = None
     seed_point: tuple[float, float] | None = None
+    end_point: tuple[float, float] | None = None
 
 
 class CurveCard(QFrame):
@@ -47,6 +48,7 @@ class CurveCard(QFrame):
     hsv_color_changed = pyqtSignal(int, tuple)
     display_color_changed = pyqtSignal(int, tuple)
     set_seed_requested = pyqtSignal(int)
+    set_end_requested = pyqtSignal(int)
 
     def __init__(self, curve: Curve, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -89,6 +91,15 @@ class CurveCard(QFrame):
         )
         self.seed_btn.clicked.connect(lambda _=None, c=cid: self.set_seed_requested.emit(c))
         layout.addWidget(self.seed_btn)
+
+        # End point
+        self.end_btn = QPushButton("🏁")
+        self.end_btn.setFixedSize(30, 24)
+        self.end_btn.setToolTip(
+            "Click, then click the graph to force where the curve's extraction stops."
+        )
+        self.end_btn.clicked.connect(lambda _=None, c=cid: self.set_end_requested.emit(c))
+        layout.addWidget(self.end_btn)
 
         # Visibility
         self.vis_btn = QPushButton("👁️")
@@ -170,6 +181,7 @@ class CurvePanel(QWidget):
     curve_hsv_changed = pyqtSignal(int, tuple)
     curve_display_color_changed = pyqtSignal(int, tuple)
     set_seed_requested = pyqtSignal(int)
+    set_end_requested = pyqtSignal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -345,6 +357,7 @@ class CurvePanel(QWidget):
         card.hsv_color_changed.connect(self.curve_hsv_changed.emit)
         card.display_color_changed.connect(self.curve_display_color_changed.emit)
         card.set_seed_requested.connect(self.set_seed_requested.emit)
+        card.set_end_requested.connect(self.set_end_requested.emit)
         self.scroll_layout.addWidget(card)
         self._cards[curve.id] = card
         self.select_curve_changed.emit(curve.id)

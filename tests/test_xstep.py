@@ -59,6 +59,22 @@ def test_midpoint_picks_run_closest_to_seed():
     assert ys[0] == pytest.approx(5.0)
 
 
+def test_end_x_crops_the_returned_curve():
+    mask = _line_mask(slope=0.2, intercept=10)
+    xs, ys = extract_curve(mask, dx=2, reducer="mean", end_x=50)
+    assert xs.size > 0
+    assert xs.max() <= 50
+
+
+def test_seed_x_and_end_x_bound_the_trace():
+    mask = np.zeros((20, 40), dtype=bool)
+    mask[10, 2:38] = True  # one long flat line
+    xs, ys = extract_curve(mask, reducer="trace", seed_x=5, seed_y=10, end_x=20, max_jump=5)
+    assert xs.size > 0
+    assert xs.max() <= 20
+    assert xs.min() >= 5
+
+
 @pytest.mark.parametrize("reducer", ["trace", "centroid"])
 def test_seed_x_picks_correct_branch_over_a_decoy_blob(reducer):
     mask = np.zeros((20, 20), dtype=bool)

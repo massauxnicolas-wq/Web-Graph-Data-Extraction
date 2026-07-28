@@ -92,6 +92,13 @@ def test_curve_color_and_seed_point_flow(window):
     assert window._mode == Mode.IDLE
     assert 1 in window.image_view.seed_markers
 
+    window._on_set_end_requested(1)
+    assert window._mode == Mode.SETTING_END
+    window._on_image_click(80, 5)
+    assert curve.end_point == (80, 5)
+    assert window._mode == Mode.IDLE
+    assert 1 in window.image_view.end_markers
+
 
 def test_exclusion_thumbnail_updates(window):
     _load_fake_image(window, size=(200, 200))
