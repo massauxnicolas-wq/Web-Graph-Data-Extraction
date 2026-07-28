@@ -38,6 +38,7 @@ class Curve:
     display_color: tuple[int, int, int] | None = None
     seed_point: tuple[float, float] | None = None
     end_point: tuple[float, float] | None = None
+    manually_edited: bool = False
 
 
 class CurveCard(QFrame):

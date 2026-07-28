@@ -121,6 +121,7 @@ class MainWindow(QMainWindow):
         self.export_panel.copy_clipboard.connect(self._copy_clipboard)
         self.export_panel.refresh_requested.connect(self._refresh_export_panel)
         self.export_panel.expert_debug_requested.connect(self._show_expert_debug_plot)
+        self.export_panel.points_edited.connect(self._on_curve_points_edited)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(self.calib_panel, "1. Calibrate")
@@ -589,6 +590,16 @@ class MainWindow(QMainWindow):
                              bestfit: bool = False, bestfit_degree: int = 3) -> None:
         if self._image_rgb is None:
             return
+        if curve.manually_edited:
+            reply = QMessageBox.question(
+                self, "Discard manual edits?",
+                f"'{curve.name}' has manually edited points. Re-extracting will discard them. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            curve.manually_edited = False
             
         tol = self.curve_panel.hsv_tol()
         mask = masking.hsv_mask(self._image_rgb, curve.hsv_center, tol)
@@ -686,6 +697,21 @@ class MainWindow(QMainWindow):
         c = self._curves_dict[curve_id]
         c.display_color = rgb
         self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
+
+    def _on_curve_points_edited(self, curve_id: int, xs, ys) -> None:
+        if curve_id not in self._curves_dict:
+            return
+        c = self._curves_dict[curve_id]
+        c.data_xs = np.asarray(xs, dtype=float)
+        c.data_ys = np.asarray(ys, dtype=float)
+        c.manually_edited = True
+        if self._calibration_M is not None and c.data_xs.size:
+            pts_data = np.column_stack([c.data_xs, c.data_ys])
+            pts_pixel = transform.data_to_pixel(pts_data, self._calibration_M)
+            c.pixel_xs = pts_pixel[:, 0]
+            c.pixel_ys = pts_pixel[:, 1]
+            self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
+        self.statusBar().showMessage(f"'{c.name}' edited manually ({c.data_xs.size} points).")
 
     def _on_set_seed_requested(self, curve_id: int) -> None:
         if curve_id not in self._curves_dict:

@@ -14,9 +14,10 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from digitizer.ui.curve_panel import Curve
+from digitizer.ui.export_dialog import EditableCurveItem, ExportPanel
 from digitizer.ui.main_window import MainWindow, Mode
 
 
@@ -106,3 +107,76 @@ def test_exclusion_thumbnail_updates(window):
     window.image_view.exclusion_roi.setPos([20, 20])
     window.image_view.exclusion_roi.setSize([40, 40])
     assert not window.curve_panel._exclusion_thumb.pixmap().isNull()
+
+
+def test_editable_curve_item_drag_and_delete(app):
+    item = EditableCurveItem()
+    item.set_points(np.array([0.0, 1.0, 2.0]), np.array([0.0, 1.0, 2.0]))
+    xs, ys = item.points()
+    assert xs.tolist() == [0.0, 1.0, 2.0]
+
+    fired = []
+    item.sigPointsEdited.connect(lambda: fired.append(True))
+
+    # simulate what a completed drag does to the underlying data
+    item.data["pos"][1] = [1.0, 99.0]
+    item.updateGraph()
+    _, ys = item.points()
+    assert ys[1] == 99.0
+
+    # simulate a delete (what shift-click triggers internally)
+    item._push(np.delete(item.data["pos"], 0, axis=0))
+    item.sigPointsEdited.emit()
+    xs, _ = item.points()
+    assert xs.tolist() == [1.0, 2.0]
+    assert fired == [True]
+
+
+def test_export_panel_edit_mode_and_quality_panel(app):
+    panel = ExportPanel()
+    curve = Curve(id=1, name="c1", hsv_center=(0, 255, 255), hsv_tol=(2, 15, 15))
+    curve.data_xs = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    curve.data_ys = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    panel.populate_curves([curve])
+
+    panel._on_row_selected(1)
+    panel._edit_cb.setChecked(True)
+    assert panel._editable_item is not None
+
+    edited = []
+    panel.points_edited.connect(lambda cid, xs, ys: edited.append((cid, xs.copy(), ys.copy())))
+    panel._editable_item._push(np.delete(panel._editable_item.data["pos"], 2, axis=0))
+    panel._editable_item.sigPointsEdited.emit()
+
+    assert len(edited) == 1
+    assert edited[0][0] == 1
+    assert "4 points" in panel._quality_lbl.text()
+
+
+def test_curve_points_edited_syncs_pixel_coords_and_flags_manual_edit(window):
+    _load_fake_image(window)
+    window._calibration_M = np.eye(3)
+    curve = Curve(id=1, name="c1", hsv_center=(0, 255, 255), hsv_tol=(2, 15, 15))
+    curve.data_xs = np.array([0.0, 1.0, 2.0])
+    curve.data_ys = np.array([0.0, 1.0, 2.0])
+    window._curves_dict[1] = curve
+
+    window._on_curve_points_edited(1, np.array([0.0, 1.0, 5.0]), np.array([0.0, 1.0, 9.0]))
+    assert curve.manually_edited is True
+    assert curve.pixel_xs.tolist() == [0.0, 1.0, 5.0]
+
+
+def test_manually_edited_curve_warns_before_reextraction(window, monkeypatch):
+    _load_fake_image(window)
+    window._calibration_M = np.eye(3)
+    curve = Curve(id=1, name="c1", hsv_center=(0, 255, 255), hsv_tol=(2, 15, 15))
+    curve.manually_edited = True
+    curve.data_xs = np.array([0.0, 1.0])
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.No))
+    window._run_xstep_for_curve(curve, dx=2, fill=False, reducer="mean")
+    assert curve.manually_edited is True  # declined -> guard left the flag untouched
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    window._run_xstep_for_curve(curve, dx=2, fill=False, reducer="mean")
+    assert curve.manually_edited is False  # accepted -> proceeded and cleared the flag
