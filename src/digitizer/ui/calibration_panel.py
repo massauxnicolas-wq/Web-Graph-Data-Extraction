@@ -31,7 +31,6 @@ class CalibrationPanel(QWidget):
     auto_calibrate_requested = pyqtSignal()
     debug_overlay_requested = pyqtSignal()
     points_changed = pyqtSignal(list)  # emitted when captured points are changed other than by a fresh click
-    grid_visibility_toggled = pyqtSignal(bool)
 
     LABELS = ("Origin", "X-axis max", "Y-axis max", "Top-Right (Optional)")
 
@@ -166,11 +165,6 @@ class CalibrationPanel(QWidget):
         form.addRow("Y-axis max value:", self._y_max)
 
         layout.addWidget(val_box)
-
-        self._grid_cb = QCheckBox("Show grid")
-        self._grid_cb.setChecked(True)
-        self._grid_cb.toggled.connect(self.grid_visibility_toggled)
-        layout.addWidget(self._grid_cb)
 
         btns = QHBoxLayout()
         self._solve_btn = QPushButton("Solve calibration")

@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from digitizer.core import calibration as calib_mod
-from digitizer.core import image_io, interpolate, masking, transform, xstep
+from digitizer.core import image_io, interpolate, masking, quality, transform, xstep
 from digitizer.core.auto_detect import (
     PlotBox, AxisInfo,
     detect_plot_box, detect_axis_labels, detect_curve_colors, get_ocr_reader,
@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
         self._curves_dict: dict[int, Curve] = {}
         self._curve_id_counter = 0
         self._selected_curve_id: int | None = None
+        self._edit_curve_id: int | None = None
         self._mode: Mode = Mode.IDLE
 
         # Widgets
@@ -93,7 +94,6 @@ class MainWindow(QMainWindow):
         self.calib_panel.auto_calibrate_requested.connect(self._auto_calibrate)
         self.calib_panel.debug_overlay_requested.connect(self._show_debug_overlay)
         self.calib_panel.points_changed.connect(self._on_calib_points_changed)
-        self.calib_panel.grid_visibility_toggled.connect(self.image_view.set_grid_visible)
         self.image_view.calib_marker_moved.connect(self._on_calib_marker_moved)
 
         self.curve_panel = CurvePanel()
@@ -115,9 +115,15 @@ class MainWindow(QMainWindow):
         self.curve_panel.set_end_requested.connect(self._on_set_end_requested)
 
         self.edit_panel = EditPanel()
-        self.edit_panel.points_edited.connect(self._on_curve_points_edited)
+        self.edit_panel.edit_mode_toggled.connect(self._on_edit_mode_toggled)
+        self.edit_panel.curve_selected.connect(self._on_edit_curve_selected)
+        self.edit_panel.image_opacity_changed.connect(lambda v: self.image_view.set_image_opacity(v / 100))
+        self.edit_panel.delete_point_requested.connect(self._on_delete_point)
+        self.edit_panel.delete_outliers_requested.connect(self._on_delete_outliers)
         self.edit_panel.refresh_requested.connect(self._refresh_edit_panel)
         self.edit_panel.expert_debug_requested.connect(self._show_expert_debug_plot)
+        self.image_view.curve_points_edited.connect(self._on_curve_canvas_edited)
+        self.image_view.edit_selection_changed.connect(self._on_edit_selection_changed)
 
         self.export_panel = ExportPanel()
         self.export_panel.export_csv_active.connect(self._export_csv_active)
@@ -477,40 +483,11 @@ class MainWindow(QMainWindow):
         self._calibration_data_pts = [tuple(p) for p in data_pts.tolist()]
         err = calib_mod.round_trip_error(M, pixel_pts, data_pts)
         self._recompute_curve_data()
-        self._draw_calibration_grid()
         self.image_view.set_plotbox_preview(None)
         self.calib_panel.set_solved_status(True, f"max round-trip error = {err:.4g}")
         self.statusBar().showMessage(f"Calibration solved (err = {err:.4g}). Switch to Curves panel.")
         if not silent:
-            QMessageBox.information(self, "Success", "Calibration solved successfully!\nA grid preview has been overlaid on your image.")
-
-    def _draw_calibration_grid(self) -> None:
-        if self._calibration_M is None:
-            self.image_view.set_grid_lines([])
-            return
-        
-        data_pts = np.array(self.calib_panel.data_points())
-        x_min, x_max = np.min(data_pts[:, 0]), np.max(data_pts[:, 0])
-        y_min, y_max = np.min(data_pts[:, 1]), np.max(data_pts[:, 1])
-        
-        if x_min == x_max or y_min == y_max:
-            return
-            
-        xs = np.linspace(x_min, x_max, 10)
-        ys = np.linspace(y_min, y_max, 10)
-        
-        lines = []
-        for x in xs:
-            pts = np.array([[x, y_min], [x, y_max]])
-            pix = transform.data_to_pixel(pts, self._calibration_M)
-            lines.append(pix)
-            
-        for y in ys:
-            pts = np.array([[x_min, y], [x_max, y]])
-            pix = transform.data_to_pixel(pts, self._calibration_M)
-            lines.append(pix)
-            
-        self.image_view.set_grid_lines(lines)
+            QMessageBox.information(self, "Success", "Calibration solved successfully!")
 
     def _recompute_curve_data(self) -> None:
         if self._calibration_M is None:
@@ -528,7 +505,6 @@ class MainWindow(QMainWindow):
         self._calibration_pixel_pts.clear()
         self._calibration_data_pts.clear()
         self.image_view.set_calibration_markers([], [])
-        self.image_view.set_grid_lines([])
 
     # --- Curve picking & masking -------------------------------------------
     def _on_hsv_changed(self, _center, _tol) -> None:
@@ -673,7 +649,10 @@ class MainWindow(QMainWindow):
         if curve_id in self._curves_dict:
             del self._curves_dict[curve_id]
             self.curve_panel.remove_curve_card(curve_id)
-            self.image_view.remove_curve(curve_id)
+            self.image_view.remove_curve(curve_id)  # also stops editing if it was the edited one
+            if self._edit_curve_id == curve_id:
+                self._edit_curve_id = None
+                self._refresh_edit_panel()
             if self._selected_curve_id == curve_id:
                 self._selected_curve_id = None
                 self.image_view.clear_mask()
@@ -710,20 +689,66 @@ class MainWindow(QMainWindow):
         c.display_color = rgb
         self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
 
-    def _on_curve_points_edited(self, curve_id: int, xs, ys) -> None:
+    # --- canvas point editing ------------------------------------------------
+    def _on_edit_mode_toggled(self, on: bool) -> None:
+        self._apply_canvas_editing(on)
+
+    def _on_edit_curve_selected(self, curve_id: int) -> None:
+        self._edit_curve_id = curve_id
+        c = self._curves_dict.get(curve_id)
+        self.edit_panel.update_quality(
+            c.pixel_xs if c is not None else None,
+            c.pixel_ys if c is not None else None,
+        )
+        self._apply_canvas_editing(self.edit_panel.is_edit_mode())
+
+    def _apply_canvas_editing(self, on: bool) -> None:
+        """Start/stop canvas editing, then always redraw every curve.
+
+        Redrawing unconditionally is what keeps the canvas honest: whichever
+        curve is editable gets routed to the editable item by
+        ImageView.set_curve_points, and everything else back to its scatter.
+        """
+        self.image_view.stop_curve_editing()
+        curve = self._curves_dict.get(self._edit_curve_id) if on else None
+        if curve is not None and curve.pixel_xs.size:
+            self.image_view.start_curve_editing(curve.id, curve.pixel_xs, curve.pixel_ys)
+        for c in self._curves_dict.values():
+            self.image_view.set_curve_points(c.id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
+        self.edit_panel.set_selected_point(-1, None, None)
+
+    def _on_edit_selection_changed(self, index: int) -> None:
+        xs, ys = self.image_view.edited_points()
+        if 0 <= index < len(xs):
+            self.edit_panel.set_selected_point(index, float(xs[index]), float(ys[index]))
+        else:
+            self.edit_panel.set_selected_point(-1, None, None)
+
+    def _on_delete_point(self) -> None:
+        self.image_view.delete_selected_point()
+
+    def _on_delete_outliers(self) -> None:
+        xs, ys = self.image_view.edited_points()
+        if len(xs) < 5:
+            return
+        removed = self.image_view.delete_points_mask(quality.detect_outliers(xs, ys))
+        self.statusBar().showMessage(f"Removed {removed} outlier(s)." if removed else "No outliers to remove.")
+
+    def _on_curve_canvas_edited(self, curve_id: int, xs, ys) -> None:
+        """Points edited on the canvas (pixel space)."""
         if curve_id not in self._curves_dict:
             return
         c = self._curves_dict[curve_id]
-        c.data_xs = np.asarray(xs, dtype=float)
-        c.data_ys = np.asarray(ys, dtype=float)
+        c.pixel_xs = np.asarray(xs, dtype=float)
+        c.pixel_ys = np.asarray(ys, dtype=float)
         c.manually_edited = True
-        if self._calibration_M is not None and c.data_xs.size:
-            pts_data = np.column_stack([c.data_xs, c.data_ys])
-            pts_pixel = transform.data_to_pixel(pts_data, self._calibration_M)
-            c.pixel_xs = pts_pixel[:, 0]
-            c.pixel_ys = pts_pixel[:, 1]
-            self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
-        self.statusBar().showMessage(f"'{c.name}' edited manually ({c.data_xs.size} points).")
+        if self._calibration_M is not None and c.pixel_xs.size:
+            pts_pixel = np.column_stack([c.pixel_xs, c.pixel_ys])
+            pts_data = transform.pixel_to_data(pts_pixel, self._calibration_M)
+            c.data_xs = pts_data[:, 0]
+            c.data_ys = pts_data[:, 1]
+        self.edit_panel.update_quality(c.pixel_xs, c.pixel_ys)
+        self.statusBar().showMessage(f"'{c.name}' edited manually ({c.pixel_xs.size} points).")
 
     def _on_set_seed_requested(self, curve_id: int) -> None:
         if curve_id not in self._curves_dict:
@@ -815,16 +840,8 @@ class MainWindow(QMainWindow):
             self._refresh_edit_panel()
         elif index == 3:  # Export
             self._refresh_export_panel()
-        # The editing plot needs real estate, so hand it most of the window
-        # while that tab is up and give the canvas its space back afterwards.
-        total = max(self._splitter.width(), 800)
-        if index == 2:
-            self._splitter.setSizes([int(total * 0.32), int(total * 0.68)])
-        else:
-            self._splitter.setSizes([int(total * 0.75), int(total * 0.25)])
-
     def _refresh_edit_panel(self) -> None:
-        self.edit_panel.populate_curves(list(self._curves_dict.values()))
+        self.edit_panel.populate_curves(list(self._curves_dict.values()), self._edit_curve_id)
 
     def _refresh_export_panel(self) -> None:
         curves = list(self._curves_dict.values())

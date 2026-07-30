@@ -5,6 +5,8 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QWidget
 
+from digitizer.ui.editable_curve_item import EditableCurveItem
+
 
 class ImageView(pg.GraphicsLayoutWidget):
     """pyqtgraph view that emits pixel-coordinate clicks on the underlying image."""
@@ -12,6 +14,8 @@ class ImageView(pg.GraphicsLayoutWidget):
     image_clicked = pyqtSignal(float, float)
     calib_marker_moved = pyqtSignal(int, float, float)  # index, x, y
     exclusion_thumbnail_changed = pyqtSignal(object)  # QPixmap | None
+    curve_points_edited = pyqtSignal(int, object, object)  # curve_id, pixel xs, pixel ys
+    edit_selection_changed = pyqtSignal(int)  # index of selected point, -1 for none
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -28,13 +32,13 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.view.addItem(self.mask_item)
 
         self.curve_scatters: dict[int, pg.ScatterPlotItem] = {}
+        self._editable_item: EditableCurveItem | None = None
+        self._editable_curve_id: int | None = None
 
         self.calib_targets: list[pg.TargetItem] = []
         self.seed_markers: dict[int, pg.TargetItem] = {}
         self.end_markers: dict[int, pg.TargetItem] = {}
         self.plotbox_preview: pg.PlotCurveItem | None = None
-
-        self.grid_curves: list[pg.PlotCurveItem] = []
 
         self.exclusion_roi = pg.RectROI([50, 50], [100, 100], pen=pg.mkPen("r", width=2))
         self.exclusion_roi.setZValue(20)
@@ -52,7 +56,6 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.clear_mask()
         self.clear_all_curves()
         self.set_calibration_markers([], [])
-        self.set_grid_lines([])
         self.set_plotbox_preview(None)
         for cid in list(self.seed_markers):
             self.set_seed_marker(cid, None, None)
@@ -74,6 +77,18 @@ class ImageView(pg.GraphicsLayoutWidget):
         self, curve_id: int, xs: np.ndarray, ys: np.ndarray, hsv: tuple[int, int, int],
         visible: bool, display_color: tuple[int, int, int] | None = None,
     ) -> None:
+        """The one way points reach the canvas.
+
+        Routes to the editable item when this curve is the one being edited,
+        otherwise to its plain scatter. It must always draw something -- an
+        early return here silently swallows extraction results and made the
+        canvas look dead in a previous revision.
+        """
+        if curve_id == self._editable_curve_id and self._editable_item is not None:
+            self._editable_item.set_points(xs, ys, keep_selection=True)
+            self._editable_item.setVisible(visible)
+            return
+
         if display_color is not None:
             cr, cg, cb = display_color
         else:
@@ -93,7 +108,8 @@ class ImageView(pg.GraphicsLayoutWidget):
             self.curve_scatters[curve_id] = scatter
 
         scatter = self.curve_scatters[curve_id]
-        scatter.setVisible(visible)
+        # While another curve is being edited everything else stays hidden.
+        scatter.setVisible(visible and self._editable_curve_id is None)
         scatter.setBrush(pg.mkBrush(cr, cg, cb, 220))
 
         if len(xs) == 0:
@@ -103,6 +119,8 @@ class ImageView(pg.GraphicsLayoutWidget):
         scatter.setData(x=np.asarray(xs), y=np.asarray(ys))
 
     def remove_curve(self, curve_id: int) -> None:
+        if curve_id == self._editable_curve_id:
+            self.stop_curve_editing()
         if curve_id in self.curve_scatters:
             scatter = self.curve_scatters.pop(curve_id)
             self.view.removeItem(scatter)
@@ -110,9 +128,57 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.set_end_marker(curve_id, None, None)
 
     def clear_all_curves(self) -> None:
+        self.stop_curve_editing()
         for scatter in self.curve_scatters.values():
             self.view.removeItem(scatter)
         self.curve_scatters.clear()
+
+    # --- point editing on the canvas ---------------------------------------
+    def start_curve_editing(self, curve_id: int, xs: np.ndarray, ys: np.ndarray) -> None:
+        """Make one curve's points draggable/deletable, hiding the others."""
+        self.stop_curve_editing()
+
+        for cid, scatter in self.curve_scatters.items():
+            scatter.setVisible(False)
+
+        item = EditableCurveItem()
+        item.set_points(xs, ys)
+        item.setZValue(10)
+        item.sigPointsEdited.connect(self._emit_edited)
+        item.sigPointSelected.connect(self.edit_selection_changed)
+        self.view.addItem(item)
+        self._editable_item = item
+        self._editable_curve_id = curve_id
+
+    def stop_curve_editing(self) -> None:
+        """Drop the editable item. Callers redraw curves via set_curve_points()."""
+        if self._editable_item is not None:
+            self.view.removeItem(self._editable_item)
+        self._editable_item = None
+        self._editable_curve_id = None
+
+    def editing_curve_id(self) -> int | None:
+        return self._editable_curve_id
+
+    def edited_points(self) -> tuple[np.ndarray, np.ndarray]:
+        if self._editable_item is None:
+            return np.empty(0), np.empty(0)
+        return self._editable_item.points()
+
+    def delete_selected_point(self) -> bool:
+        return self._editable_item.delete_selected() if self._editable_item is not None else False
+
+    def delete_points_mask(self, mask: np.ndarray) -> int:
+        return self._editable_item.delete_mask(mask) if self._editable_item is not None else 0
+
+    def _emit_edited(self) -> None:
+        if self._editable_item is None or self._editable_curve_id is None:
+            return
+        xs, ys = self._editable_item.points()
+        self.curve_points_edited.emit(self._editable_curve_id, xs, ys)
+
+    def set_image_opacity(self, value: float) -> None:
+        self.image_item.setOpacity(value)
 
     def set_calibration_markers(self, xs: list[float], ys: list[float], labels: list[str] | None = None) -> None:
         """Rebuild the draggable calibration point markers.
@@ -169,22 +235,6 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.plotbox_preview.setZValue(9)
         self.view.addItem(self.plotbox_preview)
 
-    def set_grid_lines(self, lines: list[np.ndarray]) -> None:
-        for c in self.grid_curves:
-            self.view.removeItem(c)
-        self.grid_curves.clear()
-        
-        pen = pg.mkPen(color=(0, 0, 255, 255), width=2, style=Qt.PenStyle.DashLine)
-        for pix in lines:
-            c = pg.PlotCurveItem(x=pix[:, 0], y=pix[:, 1], pen=pen)
-            c.setZValue(12)
-            self.view.addItem(c)
-            self.grid_curves.append(c)
-
-    def set_grid_visible(self, visible: bool) -> None:
-        for c in self.grid_curves:
-            c.setVisible(visible)
-
     def set_exclusion_roi_visible(self, visible: bool) -> None:
         self.exclusion_roi.setVisible(visible)
         self._update_exclusion_thumbnail()
@@ -220,6 +270,8 @@ class ImageView(pg.GraphicsLayoutWidget):
     def _on_scene_click(self, ev) -> None:
         if ev.button() != Qt.MouseButton.LeftButton:
             return
+        if ev.isAccepted():
+            return  # an item (e.g. a point being selected) already handled this
         scene_pos = ev.scenePos()
         if not self.view.sceneBoundingRect().contains(scene_pos):
             return
@@ -231,4 +283,10 @@ class ImageView(pg.GraphicsLayoutWidget):
         h, w = img.shape[:2]
         if not (0 <= x < w and 0 <= y < h):
             return
+
+        # While editing, a click on empty canvas adds a point to that curve.
+        if self._editable_item is not None:
+            self._editable_item.insert_point(x, y)
+            return
+
         self.image_clicked.emit(x, y)
