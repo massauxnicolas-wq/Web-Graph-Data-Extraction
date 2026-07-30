@@ -483,11 +483,31 @@ class MainWindow(QMainWindow):
         self._calibration_data_pts = [tuple(p) for p in data_pts.tolist()]
         err = calib_mod.round_trip_error(M, pixel_pts, data_pts)
         self._recompute_curve_data()
+        self._draw_calibration_grid()
         self.image_view.set_plotbox_preview(None)
         self.calib_panel.set_solved_status(True, f"max round-trip error = {err:.4g}")
         self.statusBar().showMessage(f"Calibration solved (err = {err:.4g}). Switch to Curves panel.")
         if not silent:
             QMessageBox.information(self, "Success", "Calibration solved successfully!")
+
+    def _draw_calibration_grid(self) -> None:
+        """Grid over the image in calibrated data steps. Only shown on the Calibrate tab."""
+        if self._calibration_M is None:
+            self.image_view.set_grid_lines([])
+            return
+
+        data_pts = np.array(self.calib_panel.data_points())
+        x_min, x_max = np.min(data_pts[:, 0]), np.max(data_pts[:, 0])
+        y_min, y_max = np.min(data_pts[:, 1]), np.max(data_pts[:, 1])
+        if x_min == x_max or y_min == y_max:
+            return
+
+        lines = []
+        for x in np.linspace(x_min, x_max, 10):
+            lines.append(transform.data_to_pixel(np.array([[x, y_min], [x, y_max]]), self._calibration_M))
+        for y in np.linspace(y_min, y_max, 10):
+            lines.append(transform.data_to_pixel(np.array([[x_min, y], [x_max, y]]), self._calibration_M))
+        self.image_view.set_grid_lines(lines)
 
     def _recompute_curve_data(self) -> None:
         if self._calibration_M is None:
@@ -505,6 +525,7 @@ class MainWindow(QMainWindow):
         self._calibration_pixel_pts.clear()
         self._calibration_data_pts.clear()
         self.image_view.set_calibration_markers([], [])
+        self.image_view.set_grid_lines([])
 
     # --- Curve picking & masking -------------------------------------------
     def _on_hsv_changed(self, _center, _tol) -> None:
@@ -840,6 +861,9 @@ class MainWindow(QMainWindow):
             self._refresh_edit_panel()
         elif index == 3:  # Export
             self._refresh_export_panel()
+        # The calibration grid is only useful while calibrating.
+        self.image_view.set_grid_visible(index == 0)
+
     def _refresh_edit_panel(self) -> None:
         self.edit_panel.populate_curves(list(self._curves_dict.values()), self._edit_curve_id)
 

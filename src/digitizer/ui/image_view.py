@@ -40,6 +40,10 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.end_markers: dict[int, pg.TargetItem] = {}
         self.plotbox_preview: pg.PlotCurveItem | None = None
 
+        self.grid_curves: list[pg.PlotCurveItem] = []
+        self._grid_pen = pg.mkPen(color=(0, 0, 255, 255), width=2, style=Qt.PenStyle.DashLine)
+        self._grid_visible = True
+
         self.exclusion_roi = pg.RectROI([50, 50], [100, 100], pen=pg.mkPen("r", width=2))
         self.exclusion_roi.setZValue(20)
         self.exclusion_roi.setVisible(False)
@@ -56,6 +60,7 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.clear_mask()
         self.clear_all_curves()
         self.set_calibration_markers([], [])
+        self.set_grid_lines([])
         self.set_plotbox_preview(None)
         for cid in list(self.seed_markers):
             self.set_seed_marker(cid, None, None)
@@ -234,6 +239,22 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.plotbox_preview = pg.PlotCurveItem(x=rect_pixels[:, 0], y=rect_pixels[:, 1], pen=pen)
         self.plotbox_preview.setZValue(9)
         self.view.addItem(self.plotbox_preview)
+
+    def set_grid_lines(self, lines: list[np.ndarray]) -> None:
+        for c in self.grid_curves:
+            self.view.removeItem(c)
+        self.grid_curves.clear()
+        for pix in lines:
+            c = pg.PlotCurveItem(x=pix[:, 0], y=pix[:, 1], pen=self._grid_pen)
+            c.setZValue(3)
+            c.setVisible(self._grid_visible)
+            self.view.addItem(c)
+            self.grid_curves.append(c)
+
+    def set_grid_visible(self, visible: bool) -> None:
+        self._grid_visible = visible
+        for c in self.grid_curves:
+            c.setVisible(visible)
 
     def set_exclusion_roi_visible(self, visible: bool) -> None:
         self.exclusion_roi.setVisible(visible)
