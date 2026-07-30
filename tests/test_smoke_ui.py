@@ -72,6 +72,24 @@ def test_calibration_marker_drag_updates_points(window):
     assert window.calib_panel.pixel_points()[0] == (12, 88)
 
 
+def test_default_calibration_points_are_placed_and_cleared_by_manual_capture(window):
+    _load_fake_image(window, size=(200, 200))  # draws a rect from (10,10) to (190,190)
+    window._preview_plot_box()
+    window._place_default_calibration_points()
+
+    pts = window.calib_panel.pixel_points()
+    assert len(pts) == 3
+    origin, x_max, y_max = pts
+    assert origin[1] == x_max[1]      # origin and X-max share the bottom edge
+    assert origin[0] == y_max[0]      # origin and Y-max share the left edge
+    assert x_max[0] > origin[0] and y_max[1] < origin[1]
+    assert len(window.image_view.calib_targets) == 3
+
+    window._enter_calibration_mode()   # manual clicking starts from scratch
+    assert window.calib_panel.pixel_points() == []
+    assert window.image_view.calib_targets == []
+
+
 def test_calibration_reset_clears_points(window):
     _load_fake_image(window)
     window.calib_panel.add_pixel_point(1, 1)

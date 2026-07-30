@@ -182,6 +182,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No image", "Open an image first.")
             self.calib_panel._capture_btn.setChecked(False)
             return
+        # Clicking places points from scratch, so drop the auto-placed guess.
+        self.calib_panel.set_pixel_points([])
+        self.image_view.set_calibration_markers([], [])
         self._set_mode(Mode.CALIBRATING)
         self.statusBar().showMessage("Calibration capture started. Click the required points on the image.")
 
@@ -222,9 +225,30 @@ class MainWindow(QMainWindow):
         self._curves_dict.clear()
         self.image_view.clear_all_curves()
         self._selected_curve_id = None
+        self._edit_curve_id = None
         self._auto_box = None
         self._preview_plot_box()
+        self._place_default_calibration_points()
         self.statusBar().showMessage(f"Loaded {self._image_path.name} ({rgb.shape[1]}x{rgb.shape[0]})")
+
+    def _place_default_calibration_points(self) -> None:
+        """Pre-place Origin / X-max / Y-max on the detected plot box corners.
+
+        A starting guess the user can drag into place, rather than an empty
+        canvas. Starting a manual capture clears them (see
+        _enter_calibration_mode) so clicking always starts from scratch.
+        """
+        box = getattr(self, "_auto_box", None)
+        if box is None:
+            return
+        origin = (float(box.x), float(box.y + box.h))
+        x_max = (float(box.x + box.w), float(box.y + box.h))
+        y_max = (float(box.x), float(box.y))
+        pts = [origin, x_max, y_max]
+        self.calib_panel.set_pixel_points(pts)
+        self.image_view.set_calibration_markers(
+            [p[0] for p in pts], [p[1] for p in pts], list(CalibrationPanel.LABELS)
+        )
 
     def _preview_plot_box(self) -> None:
         """Show a quick green outline of the detected plot box (no OCR needed)."""
