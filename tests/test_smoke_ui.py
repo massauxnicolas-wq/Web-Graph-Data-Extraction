@@ -90,6 +90,27 @@ def test_default_calibration_points_are_placed_and_cleared_by_manual_capture(win
     assert window.image_view.calib_targets == []
 
 
+def test_grid_is_bold_on_calibrate_tab_and_faint_elsewhere(window):
+    _load_fake_image(window, size=(200, 200))
+    window.calib_panel.set_pixel_points([(10, 190), (190, 190), (10, 10)])
+    window.calib_panel._x_max.setValue(100.0)
+    window.calib_panel._y_max.setValue(50.0)
+    window._solve_calibration(silent=True)
+
+    iv = window.image_view
+    assert iv.grid_curves and len(iv.axis_curves) == 2  # X and Y axis
+
+    window._tabs.setCurrentIndex(0)
+    assert iv.grid_curves[0].opts["pen"].color().getRgb() == (0, 0, 255, 255)
+
+    for tab in (1, 2, 3):
+        window._tabs.setCurrentIndex(tab)
+        grid_rgba = iv.grid_curves[0].opts["pen"].color().getRgb()
+        axis_rgba = iv.axis_curves[0].opts["pen"].color().getRgb()
+        assert grid_rgba == (0, 0, 0, 77), f"tab {tab} grid should be faint black"
+        assert axis_rgba[3] > grid_rgba[3], f"tab {tab} axes should stand out from the grid"
+
+
 def test_calibration_reset_clears_points(window):
     _load_fake_image(window)
     window.calib_panel.add_pixel_point(1, 1)

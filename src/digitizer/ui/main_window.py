@@ -515,7 +515,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Success", "Calibration solved successfully!")
 
     def _draw_calibration_grid(self) -> None:
-        """Grid over the image in calibrated data steps. Only shown on the Calibrate tab."""
+        """Grid in calibrated data steps, plus the X and Y axis lines.
+
+        Drawn bold and blue on the Calibrate tab, faint black elsewhere -
+        see ImageView.set_grid_mode.
+        """
         if self._calibration_M is None:
             self.image_view.set_grid_lines([])
             return
@@ -526,12 +530,20 @@ class MainWindow(QMainWindow):
         if x_min == x_max or y_min == y_max:
             return
 
+        def to_px(pts):
+            return transform.data_to_pixel(np.array(pts, dtype=float), self._calibration_M)
+
         lines = []
         for x in np.linspace(x_min, x_max, 10):
-            lines.append(transform.data_to_pixel(np.array([[x, y_min], [x, y_max]]), self._calibration_M))
+            lines.append(to_px([[x, y_min], [x, y_max]]))
         for y in np.linspace(y_min, y_max, 10):
-            lines.append(transform.data_to_pixel(np.array([[x_min, y], [x_max, y]]), self._calibration_M))
-        self.image_view.set_grid_lines(lines)
+            lines.append(to_px([[x_min, y], [x_max, y]]))
+
+        axis_lines = [
+            to_px([[x_min, y_min], [x_max, y_min]]),  # X axis
+            to_px([[x_min, y_min], [x_min, y_max]]),  # Y axis
+        ]
+        self.image_view.set_grid_lines(lines, axis_lines)
 
     def _recompute_curve_data(self) -> None:
         if self._calibration_M is None:
@@ -885,8 +897,10 @@ class MainWindow(QMainWindow):
             self._refresh_edit_panel()
         elif index == 3:  # Export
             self._refresh_export_panel()
-        # The calibration grid is only useful while calibrating.
-        self.image_view.set_grid_visible(index == 0)
+        # Bold blue grid while calibrating; a faint black reference grid with
+        # visible axes everywhere else, so the plot area stays readable even
+        # when the source image is at full opacity.
+        self.image_view.set_grid_mode("calibration" if index == 0 else "reference")
 
     def _refresh_edit_panel(self) -> None:
         self.edit_panel.populate_curves(list(self._curves_dict.values()), self._edit_curve_id)

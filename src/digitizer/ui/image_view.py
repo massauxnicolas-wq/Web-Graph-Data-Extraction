@@ -41,8 +41,8 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.plotbox_preview: pg.PlotCurveItem | None = None
 
         self.grid_curves: list[pg.PlotCurveItem] = []
-        self._grid_pen = pg.mkPen(color=(0, 0, 255, 255), width=2, style=Qt.PenStyle.DashLine)
-        self._grid_visible = True
+        self.axis_curves: list[pg.PlotCurveItem] = []
+        self._grid_mode = "calibration"
 
         self.exclusion_roi = pg.RectROI([50, 50], [100, 100], pen=pg.mkPen("r", width=2))
         self.exclusion_roi.setZValue(20)
@@ -240,21 +240,44 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.plotbox_preview.setZValue(9)
         self.view.addItem(self.plotbox_preview)
 
-    def set_grid_lines(self, lines: list[np.ndarray]) -> None:
-        for c in self.grid_curves:
+    def set_grid_lines(self, lines: list[np.ndarray], axis_lines: list[np.ndarray] | None = None) -> None:
+        """Set the calibrated grid, plus the two axis lines drawn on top of it."""
+        for c in self.grid_curves + self.axis_curves:
             self.view.removeItem(c)
         self.grid_curves.clear()
+        self.axis_curves.clear()
+
         for pix in lines:
-            c = pg.PlotCurveItem(x=pix[:, 0], y=pix[:, 1], pen=self._grid_pen)
+            c = pg.PlotCurveItem(x=pix[:, 0], y=pix[:, 1])
             c.setZValue(3)
-            c.setVisible(self._grid_visible)
             self.view.addItem(c)
             self.grid_curves.append(c)
 
-    def set_grid_visible(self, visible: bool) -> None:
-        self._grid_visible = visible
+        for pix in axis_lines or []:
+            c = pg.PlotCurveItem(x=pix[:, 0], y=pix[:, 1])
+            c.setZValue(4)
+            self.view.addItem(c)
+            self.axis_curves.append(c)
+
+        self._apply_grid_style()
+
+    def set_grid_mode(self, mode: str) -> None:
+        """'calibration' = bold blue grid, 'reference' = faint black grid + axes."""
+        self._grid_mode = mode
+        self._apply_grid_style()
+
+    def _apply_grid_style(self) -> None:
+        if self._grid_mode == "calibration":
+            grid_pen = pg.mkPen(color=(0, 0, 255, 255), width=2, style=Qt.PenStyle.DashLine)
+            axis_pen = pg.mkPen(color=(0, 0, 255, 255), width=3)
+        else:
+            # Faint black so it reads over a fully opaque chart without fighting it.
+            grid_pen = pg.mkPen(color=(0, 0, 0, 77), width=1)
+            axis_pen = pg.mkPen(color=(0, 0, 0, 180), width=2)
         for c in self.grid_curves:
-            c.setVisible(visible)
+            c.setPen(grid_pen)
+        for c in self.axis_curves:
+            c.setPen(axis_pen)
 
     def set_exclusion_roi_visible(self, visible: bool) -> None:
         self.exclusion_roi.setVisible(visible)
