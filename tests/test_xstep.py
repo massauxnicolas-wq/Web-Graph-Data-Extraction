@@ -75,6 +75,21 @@ def test_seed_x_and_end_x_bound_the_trace():
     assert xs.min() >= 5
 
 
+@pytest.mark.parametrize("reducer", ["mean", "midpoint", "centroid", "trace"])
+def test_seed_and_end_points_are_forced_into_the_output(reducer):
+    # A seed/end point picked slightly off the actual mask should still show
+    # up verbatim in the output - it pins where the curve starts/ends.
+    mask = _line_mask(slope=0.2, intercept=10)
+    xs, ys = extract_curve(
+        mask, dx=2, reducer=reducer,
+        seed_x=1, seed_y=99, end_x=98, end_y=-5,
+    )
+    assert xs[0] == 1
+    assert ys[0] == 99
+    assert xs[-1] == 98
+    assert ys[-1] == -5
+
+
 @pytest.mark.parametrize("reducer", ["trace", "centroid"])
 def test_seed_x_picks_correct_branch_over_a_decoy_blob(reducer):
     mask = np.zeros((20, 20), dtype=bool)

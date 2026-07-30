@@ -219,6 +219,7 @@ def extract_curve(
     seed_y: int | None = None,
     seed_x: int | None = None,
     end_x: float | None = None,
+    end_y: float | None = None,
     reducer: str = "mean",
     max_jump: float | None = 50.0,
     window_size: int = 20,
@@ -279,5 +280,18 @@ def extract_curve(
         keep = xs_out <= end_x
         xs_out = xs_out[keep]
         ys_out = ys_out[keep]
+
+    # Force the output to literally touch the user-picked start/end points,
+    # rather than whichever mask pixel happened to be nearest - a seed/end
+    # point is meant to pin exactly where the curve begins/ends.
+    if seed_x is not None and seed_y is not None:
+        if xs_out.size == 0 or xs_out[0] != seed_x or ys_out[0] != seed_y:
+            xs_out = np.insert(xs_out, 0, float(seed_x))
+            ys_out = np.insert(ys_out, 0, float(seed_y))
+
+    if end_x is not None and end_y is not None:
+        if xs_out.size == 0 or xs_out[-1] != end_x or ys_out[-1] != end_y:
+            xs_out = np.append(xs_out, float(end_x))
+            ys_out = np.append(ys_out, float(end_y))
 
     return xs_out, ys_out

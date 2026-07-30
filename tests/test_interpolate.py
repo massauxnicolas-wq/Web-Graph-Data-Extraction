@@ -1,7 +1,13 @@
 import numpy as np
 import pytest
 
-from digitizer.core.interpolate import fill_gaps, fill_gaps_parametric, polynomial_best_fit, uniform_grid
+from digitizer.core.interpolate import (
+    fill_gaps,
+    fill_gaps_parametric,
+    polynomial_best_fit,
+    polynomial_best_fit_through_points,
+    uniform_grid,
+)
 
 
 def test_fill_gaps_linear_interpolation():
@@ -54,6 +60,31 @@ def test_polynomial_best_fit_smooths_noisy_line():
 def test_polynomial_best_fit_rejects_too_few_points():
     with pytest.raises(ValueError, match=">="):
         polynomial_best_fit([0, 1], [0, 1], degree=3)
+
+
+def test_polynomial_best_fit_through_points_hits_endpoints_exactly():
+    xs = np.linspace(0, 10, 30)
+    ys = 0.5 * xs**2 - 2 * xs + 3 + np.sin(xs)  # noisy-ish, doesn't naturally pass through our targets
+    x0, y0, x1, y1 = 0.0, 100.0, 10.0, -50.0
+    out_x, out_y = polynomial_best_fit_through_points(xs, ys, degree=3, x0=x0, y0=y0, x1=x1, y1=y1)
+    assert out_x[0] == pytest.approx(x0)
+    assert out_y[0] == pytest.approx(y0)
+    assert out_x[-1] == pytest.approx(x1)
+    assert out_y[-1] == pytest.approx(y1)
+
+
+def test_polynomial_best_fit_through_points_degree_one_is_the_line():
+    xs = np.linspace(0, 10, 20)
+    ys = np.random.RandomState(1).normal(size=20)  # pure noise, irrelevant for degree 1
+    x0, y0, x1, y1 = 0.0, 2.0, 10.0, 22.0
+    out_x, out_y = polynomial_best_fit_through_points(xs, ys, degree=1, x0=x0, y0=y0, x1=x1, y1=y1)
+    expected = y0 + (y1 - y0) * (out_x - x0) / (x1 - x0)
+    np.testing.assert_allclose(out_y, expected)
+
+
+def test_polynomial_best_fit_through_points_rejects_equal_x():
+    with pytest.raises(ValueError, match="different x"):
+        polynomial_best_fit_through_points([0, 1, 2], [0, 1, 2], degree=2, x0=1.0, y0=1.0, x1=1.0, y1=5.0)
 
 
 def test_uniform_grid_spans_min_to_max():

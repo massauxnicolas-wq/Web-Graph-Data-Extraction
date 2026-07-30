@@ -169,7 +169,6 @@ class ExportPanel(QWidget):
 
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground("w")
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.setLabel("bottom", "X")
         self.plot_widget.setLabel("left", "Y")
         self.plot_widget.setMinimumHeight(200)
@@ -177,12 +176,14 @@ class ExportPanel(QWidget):
         preview_layout.addWidget(self.plot_widget)
 
         self._edit_cb = QCheckBox("Enable point editing for selected curve")
-        self._edit_cb.setToolTip(
-            "Drag a point to move it, Shift+click to delete it, click empty space to add a new one.\n"
-            "Select a curve below first."
-        )
+        self._edit_cb.setToolTip("Select a curve below first.")
         self._edit_cb.toggled.connect(self._refresh_plot)
         preview_layout.addWidget(self._edit_cb)
+
+        self._edit_hint_lbl = QLabel("Drag = move point   |   Shift+Click = delete point   |   Click empty space = add point")
+        self._edit_hint_lbl.setStyleSheet("QLabel { font-size: 11px; color: #666; }")
+        self._edit_hint_lbl.setWordWrap(True)
+        preview_layout.addWidget(self._edit_hint_lbl)
 
         layout.addWidget(preview_box, 2)
 

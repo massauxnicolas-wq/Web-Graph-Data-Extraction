@@ -616,10 +616,10 @@ class MainWindow(QMainWindow):
 
         bbox = self._calibration_bbox()
         seed_x, seed_y = curve.seed_point if curve.seed_point is not None else (None, None)
-        end_x = curve.end_point[0] if curve.end_point is not None else None
+        end_x, end_y = curve.end_point if curve.end_point is not None else (None, None)
         xs, ys = xstep.extract_curve(
             mask, dx=dx, bbox=bbox, reducer=reducer, upscale_factor=upscale_factor,
-            seed_x=seed_x, seed_y=seed_y, end_x=end_x,
+            seed_x=seed_x, seed_y=seed_y, end_x=end_x, end_y=end_y,
         )
         if xs.size < 2:
             self.statusBar().showMessage(f"X-Step found < 2 points for '{curve.name}'. Widen HSV tolerance.")
@@ -641,7 +641,14 @@ class MainWindow(QMainWindow):
 
         if bestfit:
             try:
-                xs, ys = interpolate.polynomial_best_fit(xs, ys, bestfit_degree)
+                if curve.seed_point is not None and curve.end_point is not None:
+                    xs, ys = interpolate.polynomial_best_fit_through_points(
+                        xs, ys, bestfit_degree,
+                        curve.seed_point[0], curve.seed_point[1],
+                        curve.end_point[0], curve.end_point[1],
+                    )
+                else:
+                    xs, ys = interpolate.polynomial_best_fit(xs, ys, bestfit_degree)
             except ValueError as exc:
                 self.statusBar().showMessage(f"Best-fit skipped: {exc}")
 
