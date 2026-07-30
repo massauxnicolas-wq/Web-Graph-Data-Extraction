@@ -30,6 +30,7 @@ from digitizer.io import clipboard as clip_mod
 from digitizer.io import csv_export, json_export
 from digitizer.ui.calibration_panel import CalibrationPanel
 from digitizer.ui.curve_panel import Curve, CurvePanel
+from digitizer.ui.edit_panel import EditPanel
 from digitizer.ui.export_dialog import ExportPanel
 from digitizer.ui.image_view import ImageView
 
@@ -113,6 +114,11 @@ class MainWindow(QMainWindow):
         self.curve_panel.set_seed_requested.connect(self._on_set_seed_requested)
         self.curve_panel.set_end_requested.connect(self._on_set_end_requested)
 
+        self.edit_panel = EditPanel()
+        self.edit_panel.points_edited.connect(self._on_curve_points_edited)
+        self.edit_panel.refresh_requested.connect(self._refresh_edit_panel)
+        self.edit_panel.expert_debug_requested.connect(self._show_expert_debug_plot)
+
         self.export_panel = ExportPanel()
         self.export_panel.export_csv_active.connect(self._export_csv_active)
         self.export_panel.export_csv_wide.connect(self._export_csv_wide)
@@ -120,21 +126,20 @@ class MainWindow(QMainWindow):
         self.export_panel.export_json.connect(self._export_json)
         self.export_panel.copy_clipboard.connect(self._copy_clipboard)
         self.export_panel.refresh_requested.connect(self._refresh_export_panel)
-        self.export_panel.expert_debug_requested.connect(self._show_expert_debug_plot)
-        self.export_panel.points_edited.connect(self._on_curve_points_edited)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(self.calib_panel, "1. Calibrate")
         self._tabs.addTab(self.curve_panel, "2. Curves")
-        self._tabs.addTab(self.export_panel, "3. Export")
+        self._tabs.addTab(self.edit_panel, "3. Editing")
+        self._tabs.addTab(self.export_panel, "4. Export")
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.image_view)
-        splitter.addWidget(self._tabs)
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 1)
-        self.setCentralWidget(splitter)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.addWidget(self.image_view)
+        self._splitter.addWidget(self._tabs)
+        self._splitter.setStretchFactor(0, 4)
+        self._splitter.setStretchFactor(1, 1)
+        self.setCentralWidget(self._splitter)
 
         # Toolbar
         tb = QToolBar("Main")
@@ -806,8 +811,20 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Copied '{c.name}' to clipboard.")
 
     def _on_tab_changed(self, index: int) -> None:
-        if index == 2:  # Export tab
+        if index == 2:  # Editing
+            self._refresh_edit_panel()
+        elif index == 3:  # Export
             self._refresh_export_panel()
+        # The editing plot needs real estate, so hand it most of the window
+        # while that tab is up and give the canvas its space back afterwards.
+        total = max(self._splitter.width(), 800)
+        if index == 2:
+            self._splitter.setSizes([int(total * 0.32), int(total * 0.68)])
+        else:
+            self._splitter.setSizes([int(total * 0.75), int(total * 0.25)])
+
+    def _refresh_edit_panel(self) -> None:
+        self.edit_panel.populate_curves(list(self._curves_dict.values()))
 
     def _refresh_export_panel(self) -> None:
         curves = list(self._curves_dict.values())

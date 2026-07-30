@@ -17,7 +17,9 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from digitizer.ui.curve_panel import Curve
-from digitizer.ui.export_dialog import EditableCurveItem, ExportPanel
+from digitizer.ui.edit_panel import EditPanel
+from digitizer.ui.editable_curve_item import EditableCurveItem
+from digitizer.ui.export_dialog import ExportPanel
 from digitizer.ui.main_window import MainWindow, Mode
 
 
@@ -124,33 +126,63 @@ def test_editable_curve_item_drag_and_delete(app):
     _, ys = item.points()
     assert ys[1] == 99.0
 
-    # simulate a delete (what shift-click triggers internally)
-    item._push(np.delete(item.data["pos"], 0, axis=0))
-    item.sigPointsEdited.emit()
+    # select + delete (the path the Delete button / Delete key uses)
+    item.select_point(0)
+    assert item.selected_index == 0
+    assert item.delete_selected() is True
     xs, _ = item.points()
     assert xs.tolist() == [1.0, 2.0]
+    assert item.selected_index == -1
     assert fired == [True]
 
 
-def test_export_panel_edit_mode_and_quality_panel(app):
-    panel = ExportPanel()
+def test_editable_curve_item_insert_keeps_x_order(app):
+    item = EditableCurveItem()
+    item.set_points(np.array([0.0, 2.0, 4.0]), np.array([0.0, 2.0, 4.0]))
+    item.insert_point(3.0, 30.0)
+    xs, ys = item.points()
+    assert xs.tolist() == [0.0, 2.0, 3.0, 4.0]
+    assert ys.tolist() == [0.0, 2.0, 30.0, 4.0]
+
+
+def test_editable_curve_item_delete_mask_removes_outliers(app):
+    item = EditableCurveItem()
+    item.set_points(np.arange(5.0), np.array([0.0, 1.0, 99.0, 3.0, 4.0]))
+    removed = item.delete_mask(np.array([False, False, True, False, False]))
+    assert removed == 1
+    _, ys = item.points()
+    assert 99.0 not in ys.tolist()
+
+
+def test_edit_panel_selects_curve_and_reports_quality(app):
+    panel = EditPanel()
     curve = Curve(id=1, name="c1", hsv_center=(0, 255, 255), hsv_tol=(2, 15, 15))
     curve.data_xs = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
     curve.data_ys = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
     panel.populate_curves([curve])
 
-    panel._on_row_selected(1)
-    panel._edit_cb.setChecked(True)
-    assert panel._editable_item is not None
+    assert panel._item is not None
+    assert "5 points" in panel._quality_lbl.text()
 
     edited = []
     panel.points_edited.connect(lambda cid, xs, ys: edited.append((cid, xs.copy(), ys.copy())))
-    panel._editable_item._push(np.delete(panel._editable_item.data["pos"], 2, axis=0))
-    panel._editable_item.sigPointsEdited.emit()
+
+    panel._item.select_point(2)
+    assert panel._del_btn.isEnabled()
+    panel._delete_selected()
 
     assert len(edited) == 1
     assert edited[0][0] == 1
+    assert edited[0][1].tolist() == [0.0, 1.0, 3.0, 4.0]
     assert "4 points" in panel._quality_lbl.text()
+
+
+def test_edit_panel_handles_no_extracted_curves(app):
+    panel = EditPanel()
+    curve = Curve(id=1, name="c1", hsv_center=(0, 255, 255), hsv_tol=(2, 15, 15))
+    panel.populate_curves([curve])  # curve has no extracted points
+    assert panel._item is None
+    assert "No extracted curves" in panel._quality_lbl.text()
 
 
 def test_curve_points_edited_syncs_pixel_coords_and_flags_manual_edit(window):
