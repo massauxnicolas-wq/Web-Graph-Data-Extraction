@@ -183,6 +183,8 @@ class CurvePanel(QWidget):
     curve_display_color_changed = pyqtSignal(int, tuple)
     set_seed_requested = pyqtSignal(int)
     set_end_requested = pyqtSignal(int)
+    edit_mode_toggled = pyqtSignal(bool)
+    image_opacity_changed = pyqtSignal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -225,6 +227,15 @@ class CurvePanel(QWidget):
         self._overlay_cb.setChecked(True)
         self._overlay_cb.toggled.connect(self.overlay_toggled.emit)
         layout.addWidget(self._overlay_cb)
+
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(QLabel("Image opacity:"))
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(0, 100)
+        self._opacity_slider.setValue(100)
+        self._opacity_slider.valueChanged.connect(self.image_opacity_changed.emit)
+        opacity_row.addWidget(self._opacity_slider)
+        layout.addLayout(opacity_row)
 
         exclusion_row = QHBoxLayout()
         self._exclusion_cb = QCheckBox("Show exclusion box (ignore legend)")
@@ -310,6 +321,15 @@ class CurvePanel(QWidget):
         run_layout.addLayout(bestfit_row)
 
         layout.addWidget(run_box)
+
+        self._edit_mode_cb = QCheckBox("Enable point editing for selected curve")
+        self._edit_mode_cb.toggled.connect(self.edit_mode_toggled.emit)
+        layout.addWidget(self._edit_mode_cb)
+
+        edit_hint_lbl = QLabel("Drag = move point   |   Shift+Click = delete point   |   Click empty space = add point")
+        edit_hint_lbl.setStyleSheet("QLabel { font-size: 11px; color: #666; }")
+        edit_hint_lbl.setWordWrap(True)
+        layout.addWidget(edit_hint_lbl)
 
         list_box = QGroupBox("Curve Manager")
         ll = QVBoxLayout(list_box)

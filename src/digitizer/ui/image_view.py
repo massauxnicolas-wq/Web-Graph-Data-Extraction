@@ -5,6 +5,8 @@ import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QWidget
 
+from digitizer.ui.editable_curve_item import EditableCurveItem
+
 
 class ImageView(pg.GraphicsLayoutWidget):
     """pyqtgraph view that emits pixel-coordinate clicks on the underlying image."""
@@ -12,6 +14,7 @@ class ImageView(pg.GraphicsLayoutWidget):
     image_clicked = pyqtSignal(float, float)
     calib_marker_moved = pyqtSignal(int, float, float)  # index, x, y
     exclusion_thumbnail_changed = pyqtSignal(object)  # QPixmap | None
+    curve_points_edited = pyqtSignal(int, object, object)  # curve_id, pixel xs, pixel ys
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -28,6 +31,8 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.view.addItem(self.mask_item)
 
         self.curve_scatters: dict[int, pg.ScatterPlotItem] = {}
+        self._editable_item: EditableCurveItem | None = None
+        self._editable_curve_id: int | None = None
 
         self.calib_targets: list[pg.TargetItem] = []
         self.seed_markers: dict[int, pg.TargetItem] = {}
@@ -54,6 +59,7 @@ class ImageView(pg.GraphicsLayoutWidget):
         self.set_calibration_markers([], [])
         self.set_grid_lines([])
         self.set_plotbox_preview(None)
+        self.set_curve_editing(None)
         for cid in list(self.seed_markers):
             self.set_seed_marker(cid, None, None)
         for cid in list(self.end_markers):
@@ -74,6 +80,8 @@ class ImageView(pg.GraphicsLayoutWidget):
         self, curve_id: int, xs: np.ndarray, ys: np.ndarray, hsv: tuple[int, int, int],
         visible: bool, display_color: tuple[int, int, int] | None = None,
     ) -> None:
+        if curve_id == self._editable_curve_id:
+            return  # this curve's points are currently rendered by the editable item instead
         if display_color is not None:
             cr, cg, cb = display_color
         else:
@@ -106,13 +114,46 @@ class ImageView(pg.GraphicsLayoutWidget):
         if curve_id in self.curve_scatters:
             scatter = self.curve_scatters.pop(curve_id)
             self.view.removeItem(scatter)
+        if curve_id == self._editable_curve_id:
+            self.set_curve_editing(None)
         self.set_seed_marker(curve_id, None, None)
         self.set_end_marker(curve_id, None, None)
+
+    def set_curve_editing(self, curve_id: int | None, xs: np.ndarray | None = None, ys: np.ndarray | None = None) -> None:
+        """Make curve_id's points draggable/deletable/insertable on the canvas.
+
+        Pass curve_id=None to revert to plain (non-interactive) display -
+        the caller is responsible for re-calling set_curve_points() for
+        whichever curve was previously being edited, since this method
+        doesn't know that curve's display color/visibility.
+        """
+        if self._editable_item is not None:
+            self.view.removeItem(self._editable_item)
+            self._editable_item = None
+            self._editable_curve_id = None
+
+        if curve_id is None or xs is None or ys is None:
+            return
+
+        if curve_id in self.curve_scatters:
+            self.view.removeItem(self.curve_scatters.pop(curve_id))
+
+        item = EditableCurveItem()
+        item.set_points(xs, ys)
+        item.setZValue(10)
+        item.sigPointsEdited.connect(lambda cid=curve_id, it=item: self.curve_points_edited.emit(cid, *it.points()))
+        self.view.addItem(item)
+        self._editable_item = item
+        self._editable_curve_id = curve_id
+
+    def set_image_opacity(self, value: float) -> None:
+        self.image_item.setOpacity(value)
 
     def clear_all_curves(self) -> None:
         for scatter in self.curve_scatters.values():
             self.view.removeItem(scatter)
         self.curve_scatters.clear()
+        self.set_curve_editing(None)
 
     def set_calibration_markers(self, xs: list[float], ys: list[float], labels: list[str] | None = None) -> None:
         """Rebuild the draggable calibration point markers.
@@ -220,6 +261,8 @@ class ImageView(pg.GraphicsLayoutWidget):
     def _on_scene_click(self, ev) -> None:
         if ev.button() != Qt.MouseButton.LeftButton:
             return
+        if ev.isAccepted():
+            return  # an item (e.g. a point on the active editable curve) already handled this
         scene_pos = ev.scenePos()
         if not self.view.sceneBoundingRect().contains(scene_pos):
             return
@@ -231,4 +274,14 @@ class ImageView(pg.GraphicsLayoutWidget):
         h, w = img.shape[:2]
         if not (0 <= x < w and 0 <= y < h):
             return
+
+        if self._editable_item is not None and self._editable_curve_id is not None:
+            xs, ys = self._editable_item.points()
+            idx = int(np.searchsorted(xs, x))
+            xs = np.insert(xs, idx, x)
+            ys = np.insert(ys, idx, y)
+            self._editable_item.set_points(xs, ys)
+            self.curve_points_edited.emit(self._editable_curve_id, xs, ys)
+            return
+
         self.image_clicked.emit(x, y)
