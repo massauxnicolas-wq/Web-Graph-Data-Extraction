@@ -17,8 +17,7 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from digitizer.ui.curve_panel import Curve
-from digitizer.ui.editable_curve_item import EditableCurveItem
-from digitizer.ui.export_dialog import ExportPanel
+from digitizer.ui.export_dialog import EditableCurveItem, ExportPanel
 from digitizer.ui.main_window import MainWindow, Mode
 
 
@@ -133,7 +132,7 @@ def test_editable_curve_item_drag_and_delete(app):
     assert fired == [True]
 
 
-def test_export_panel_row_selection_and_quality_panel(app):
+def test_export_panel_edit_mode_and_quality_panel(app):
     panel = ExportPanel()
     curve = Curve(id=1, name="c1", hsv_center=(0, 255, 255), hsv_tol=(2, 15, 15))
     curve.data_xs = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
@@ -141,45 +140,30 @@ def test_export_panel_row_selection_and_quality_panel(app):
     panel.populate_curves([curve])
 
     panel._on_row_selected(1)
-    assert "5 points" in panel._quality_lbl.text()
+    panel._edit_cb.setChecked(True)
+    assert panel._editable_item is not None
+
+    edited = []
+    panel.points_edited.connect(lambda cid, xs, ys: edited.append((cid, xs.copy(), ys.copy())))
+    panel._editable_item._push(np.delete(panel._editable_item.data["pos"], 2, axis=0))
+    panel._editable_item.sigPointsEdited.emit()
+
+    assert len(edited) == 1
+    assert edited[0][0] == 1
+    assert "4 points" in panel._quality_lbl.text()
 
 
-def test_canvas_edit_mode_activates_editable_curve(window):
-    _load_fake_image(window)
-    curve = Curve(id=1, name="c1", hsv_center=(0, 255, 255), hsv_tol=(2, 15, 15))
-    curve.pixel_xs = np.array([0.0, 1.0, 2.0])
-    curve.pixel_ys = np.array([0.0, 1.0, 2.0])
-    window._curves_dict[1] = curve
-    window.curve_panel.add_curve_card(curve)
-
-    window._on_curve_selected(1)
-    window._on_edit_mode_toggled(True)
-    assert window.image_view._editable_curve_id == 1
-    assert isinstance(window.image_view._editable_item, EditableCurveItem)
-
-    window._on_edit_mode_toggled(False)
-    assert window.image_view._editable_curve_id is None
-    assert 1 in window.image_view.curve_scatters  # plain scatter restored, not left blank
-
-
-def test_curve_canvas_edited_syncs_data_coords_and_flags_manual_edit(window):
+def test_curve_points_edited_syncs_pixel_coords_and_flags_manual_edit(window):
     _load_fake_image(window)
     window._calibration_M = np.eye(3)
     curve = Curve(id=1, name="c1", hsv_center=(0, 255, 255), hsv_tol=(2, 15, 15))
-    curve.pixel_xs = np.array([0.0, 1.0, 2.0])
-    curve.pixel_ys = np.array([0.0, 1.0, 2.0])
+    curve.data_xs = np.array([0.0, 1.0, 2.0])
+    curve.data_ys = np.array([0.0, 1.0, 2.0])
     window._curves_dict[1] = curve
 
-    window._on_curve_canvas_edited(1, np.array([0.0, 1.0, 5.0]), np.array([0.0, 1.0, 9.0]))
+    window._on_curve_points_edited(1, np.array([0.0, 1.0, 5.0]), np.array([0.0, 1.0, 9.0]))
     assert curve.manually_edited is True
-    assert curve.data_xs.tolist() == [0.0, 1.0, 5.0]
-    assert curve.data_ys.tolist() == [0.0, 1.0, 9.0]
-
-
-def test_image_opacity_slider(window):
-    _load_fake_image(window)
-    window.image_view.set_image_opacity(0.4)
-    assert window.image_view.image_item.opacity() == pytest.approx(0.4)
+    assert curve.pixel_xs.tolist() == [0.0, 1.0, 5.0]
 
 
 def test_manually_edited_curve_warns_before_reextraction(window, monkeypatch):

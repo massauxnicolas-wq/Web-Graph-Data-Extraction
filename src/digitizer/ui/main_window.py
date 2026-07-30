@@ -78,14 +78,11 @@ class MainWindow(QMainWindow):
         self._curves_dict: dict[int, Curve] = {}
         self._curve_id_counter = 0
         self._selected_curve_id: int | None = None
-        self._edit_mode_on: bool = False
-        self._canvas_editable_curve_id: int | None = None
         self._mode: Mode = Mode.IDLE
 
         # Widgets
         self.image_view = ImageView()
         self.image_view.image_clicked.connect(self._on_image_click)
-        self.image_view.curve_points_edited.connect(self._on_curve_canvas_edited)
 
         self.calib_panel = CalibrationPanel()
         self.calib_panel.start_capture.connect(self._enter_calibration_mode)
@@ -115,8 +112,6 @@ class MainWindow(QMainWindow):
         self.curve_panel.curve_display_color_changed.connect(self._on_curve_display_color_changed)
         self.curve_panel.set_seed_requested.connect(self._on_set_seed_requested)
         self.curve_panel.set_end_requested.connect(self._on_set_end_requested)
-        self.curve_panel.edit_mode_toggled.connect(self._on_edit_mode_toggled)
-        self.curve_panel.image_opacity_changed.connect(lambda v: self.image_view.set_image_opacity(v / 100))
 
         self.export_panel = ExportPanel()
         self.export_panel.export_csv_active.connect(self._export_csv_active)
@@ -126,6 +121,7 @@ class MainWindow(QMainWindow):
         self.export_panel.copy_clipboard.connect(self._copy_clipboard)
         self.export_panel.refresh_requested.connect(self._refresh_export_panel)
         self.export_panel.expert_debug_requested.connect(self._show_expert_debug_plot)
+        self.export_panel.points_edited.connect(self._on_curve_points_edited)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(self.calib_panel, "1. Calibrate")
@@ -215,7 +211,6 @@ class MainWindow(QMainWindow):
         self._curves_dict.clear()
         self.image_view.clear_all_curves()
         self._selected_curve_id = None
-        self._canvas_editable_curve_id = None
         self._auto_box = None
         self._preview_plot_box()
         self.statusBar().showMessage(f"Loaded {self._image_path.name} ({rgb.shape[1]}x{rgb.shape[0]})")
@@ -673,9 +668,7 @@ class MainWindow(QMainWindow):
         if curve_id in self._curves_dict:
             del self._curves_dict[curve_id]
             self.curve_panel.remove_curve_card(curve_id)
-            self.image_view.remove_curve(curve_id)  # also clears canvas editing if this curve was active
-            if self._canvas_editable_curve_id == curve_id:
-                self._canvas_editable_curve_id = None
+            self.image_view.remove_curve(curve_id)
             if self._selected_curve_id == curve_id:
                 self._selected_curve_id = None
                 self.image_view.clear_mask()
@@ -685,33 +678,6 @@ class MainWindow(QMainWindow):
             self._selected_curve_id = curve_id
             self.curve_panel.set_card_selected(curve_id)
             self._refresh_mask_overlay()
-            self._update_canvas_editing()
-
-    def _on_edit_mode_toggled(self, on: bool) -> None:
-        self._edit_mode_on = on
-        self._update_canvas_editing()
-
-    def _update_canvas_editing(self) -> None:
-        """Keep the canvas's single editable curve in sync with the edit-mode
-        checkbox and whichever curve is currently selected."""
-        new_id = self._selected_curve_id if self._edit_mode_on else None
-        old_id = self._canvas_editable_curve_id
-
-        # Switch the editable item first - set_curve_points() below refuses to
-        # touch whichever curve_id image_view still considers "the editable
-        # one", so the old curve must stop being editable before its plain
-        # scatter can be restored.
-        if new_id is not None and new_id in self._curves_dict:
-            c = self._curves_dict[new_id]
-            self.image_view.set_curve_editing(new_id, c.pixel_xs, c.pixel_ys)
-        else:
-            self.image_view.set_curve_editing(None)
-
-        if old_id is not None and old_id != new_id and old_id in self._curves_dict:
-            c = self._curves_dict[old_id]
-            self.image_view.set_curve_points(old_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
-
-        self._canvas_editable_curve_id = new_id
 
     def _on_curve_visibility_changed(self, curve_id: int, visible: bool) -> None:
         if curve_id in self._curves_dict:
@@ -739,20 +705,20 @@ class MainWindow(QMainWindow):
         c.display_color = rgb
         self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
 
-    def _on_curve_canvas_edited(self, curve_id: int, xs, ys) -> None:
-        """Points edited directly on the main canvas (pixel space)."""
+    def _on_curve_points_edited(self, curve_id: int, xs, ys) -> None:
         if curve_id not in self._curves_dict:
             return
         c = self._curves_dict[curve_id]
-        c.pixel_xs = np.asarray(xs, dtype=float)
-        c.pixel_ys = np.asarray(ys, dtype=float)
+        c.data_xs = np.asarray(xs, dtype=float)
+        c.data_ys = np.asarray(ys, dtype=float)
         c.manually_edited = True
-        if self._calibration_M is not None and c.pixel_xs.size:
-            pts_pixel = np.column_stack([c.pixel_xs, c.pixel_ys])
-            pts_data = transform.pixel_to_data(pts_pixel, self._calibration_M)
-            c.data_xs = pts_data[:, 0]
-            c.data_ys = pts_data[:, 1]
-        self.statusBar().showMessage(f"'{c.name}' edited manually ({c.pixel_xs.size} points).")
+        if self._calibration_M is not None and c.data_xs.size:
+            pts_data = np.column_stack([c.data_xs, c.data_ys])
+            pts_pixel = transform.data_to_pixel(pts_data, self._calibration_M)
+            c.pixel_xs = pts_pixel[:, 0]
+            c.pixel_ys = pts_pixel[:, 1]
+            self.image_view.set_curve_points(curve_id, c.pixel_xs, c.pixel_ys, c.hsv_center, c.visible, c.display_color)
+        self.statusBar().showMessage(f"'{c.name}' edited manually ({c.data_xs.size} points).")
 
     def _on_set_seed_requested(self, curve_id: int) -> None:
         if curve_id not in self._curves_dict:

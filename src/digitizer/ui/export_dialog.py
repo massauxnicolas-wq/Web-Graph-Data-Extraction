@@ -20,6 +20,79 @@ from digitizer.core import quality
 from digitizer.ui.curve_panel import Curve
 
 
+class EditableCurveItem(pg.GraphItem):
+    """Draggable + shift-click-deletable curve points.
+
+    One GraphItem (wrapping a single internal ScatterPlotItem) per curve,
+    not one item per point - scales fine to hundreds of points. Pattern
+    adapted from pyqtgraph's own examples/CustomGraphItem.py.
+    """
+
+    sigPointsEdited = pyqtSignal()
+
+    def __init__(self) -> None:
+        self.dragPoint = None
+        self.dragOffset = None
+        super().__init__()
+        self.scatter.sigClicked.connect(self._on_scatter_clicked)
+
+    def set_points(self, xs: np.ndarray, ys: np.ndarray) -> None:
+        pos = np.column_stack([np.asarray(xs, dtype=float), np.asarray(ys, dtype=float)])
+        self._push(pos)
+
+    def points(self) -> tuple[np.ndarray, np.ndarray]:
+        pos = self.data.get("pos") if self.data else None
+        if pos is None or len(pos) == 0:
+            return np.empty(0), np.empty(0)
+        return pos[:, 0].copy(), pos[:, 1].copy()
+
+    def _push(self, pos: np.ndarray) -> None:
+        n = len(pos)
+        adj = np.column_stack([np.arange(n - 1), np.arange(1, n)]) if n > 1 else np.empty((0, 2), dtype=int)
+        self.setData(
+            pos=pos, adj=adj, size=8, symbol="o", pxMode=True,
+            brush=pg.mkBrush(0, 120, 255, 200), pen=pg.mkPen(0, 120, 255, width=2),
+        )
+
+    def setData(self, **kwds) -> None:
+        self.data = kwds
+        self.updateGraph()
+
+    def updateGraph(self) -> None:
+        pg.GraphItem.setData(self, **self.data)
+
+    def mouseDragEvent(self, ev) -> None:
+        if ev.button() != Qt.MouseButton.LeftButton:
+            ev.ignore()
+            return
+        if ev.isStart():
+            pts = self.scatter.pointsAt(ev.buttonDownPos())
+            if len(pts) == 0:
+                ev.ignore()
+                return
+            self.dragPoint = pts[0]
+            self.dragOffset = self.data["pos"][pts[0].index()] - ev.buttonDownPos()
+        elif ev.isFinish():
+            self.dragPoint = None
+            self.sigPointsEdited.emit()
+            return
+        else:
+            if self.dragPoint is None:
+                ev.ignore()
+                return
+        ind = self.dragPoint.index()
+        self.data["pos"][ind] = ev.pos() + self.dragOffset
+        self.updateGraph()
+        ev.accept()
+
+    def _on_scatter_clicked(self, _scatter, points, ev) -> None:
+        if not (ev.modifiers() & Qt.KeyboardModifier.ShiftModifier) or len(points) == 0:
+            return
+        idx = points[0].index()
+        self._push(np.delete(self.data["pos"], idx, axis=0))
+        self.sigPointsEdited.emit()
+
+
 class ExportCurveRow(QFrame):
     """Single row in the export curve list with checkbox and info."""
 
@@ -69,13 +142,7 @@ class ExportCurveRow(QFrame):
 
 
 class ExportPanel(QWidget):
-    """Comprehensive export panel with preview plot, quality analysis and export options.
-
-    Point editing lives on the main canvas (image_view.py) now, in pixel
-    space, since the side-panel preview here is too small to edit in
-    comfortably. This panel stays read-only: a preview plot, a per-curve
-    quality readout (stats + outlier flagging), and export actions.
-    """
+    """Comprehensive export panel with preview plot and multiple export options."""
 
     export_csv_active = pyqtSignal()
     export_csv_wide = pyqtSignal()
@@ -84,12 +151,15 @@ class ExportPanel(QWidget):
     copy_clipboard = pyqtSignal()
     refresh_requested = pyqtSignal()
     expert_debug_requested = pyqtSignal()
+    points_edited = pyqtSignal(int, object, object)  # curve_id, new xs, new ys
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: dict[int, ExportCurveRow] = {}
         self._curves: list[Curve] = []
         self._selected_curve_id: int | None = None
+        self._editable_item: EditableCurveItem | None = None
+        self._editable_curve_id: int | None = None
 
         layout = QVBoxLayout(self)
 
@@ -102,7 +172,18 @@ class ExportPanel(QWidget):
         self.plot_widget.setLabel("bottom", "X")
         self.plot_widget.setLabel("left", "Y")
         self.plot_widget.setMinimumHeight(200)
+        self.plot_widget.scene().sigMouseClicked.connect(self._on_scene_clicked)
         preview_layout.addWidget(self.plot_widget)
+
+        self._edit_cb = QCheckBox("Enable point editing for selected curve")
+        self._edit_cb.setToolTip("Select a curve below first.")
+        self._edit_cb.toggled.connect(self._refresh_plot)
+        preview_layout.addWidget(self._edit_cb)
+
+        self._edit_hint_lbl = QLabel("Drag = move point   |   Shift+Click = delete point   |   Click empty space = add point")
+        self._edit_hint_lbl.setStyleSheet("QLabel { font-size: 11px; color: #666; }")
+        self._edit_hint_lbl.setWordWrap(True)
+        preview_layout.addWidget(self._edit_hint_lbl)
 
         layout.addWidget(preview_box, 2)
 
@@ -222,9 +303,36 @@ class ExportPanel(QWidget):
             f"largest gap: {stats['largest_gap']:.3g} | {int(outliers.sum())} outlier(s) flagged"
         )
 
+    def _on_points_edited(self) -> None:
+        if self._editable_item is None or self._editable_curve_id is None:
+            return
+        xs, ys = self._editable_item.points()
+        self.points_edited.emit(self._editable_curve_id, xs, ys)
+        self._update_quality_panel(xs, ys)
+
+    def _on_scene_clicked(self, ev) -> None:
+        if not self._edit_cb.isChecked() or ev.button() != Qt.MouseButton.LeftButton:
+            return
+        if ev.isAccepted():
+            return  # a point (drag or shift-click delete) already handled this click
+        if self._editable_item is None or self._editable_curve_id is None:
+            return
+        vb = self.plot_widget.getPlotItem().vb
+        view_pos = vb.mapSceneToView(ev.scenePos())
+        x, y = float(view_pos.x()), float(view_pos.y())
+        xs, ys = self._editable_item.points()
+        idx = int(np.searchsorted(xs, x))
+        xs = np.insert(xs, idx, x)
+        ys = np.insert(ys, idx, y)
+        self._editable_item.set_points(xs, ys)
+        self._on_points_edited()
+
     def _refresh_plot(self) -> None:
         self.plot_widget.clear()
+        self._editable_item = None
+        self._editable_curve_id = None
         checked = set(self.checked_curve_ids())
+        edit_on = self._edit_cb.isChecked()
 
         for curve in self._curves:
             if curve.id not in checked:
@@ -234,11 +342,20 @@ class ExportPanel(QWidget):
             pixel = np.uint8([[[curve.hsv_center[0], curve.hsv_center[1], curve.hsv_center[2]]]])
             rgb = cv2.cvtColor(pixel, cv2.COLOR_HSV2RGB)[0][0]
             color = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
-            pen = pg.mkPen(color=color, width=2)
-            self.plot_widget.plot(
-                curve.data_xs, curve.data_ys,
-                pen=pen, name=curve.name,
-            )
+
+            if edit_on and curve.id == self._selected_curve_id:
+                item = EditableCurveItem()
+                item.set_points(curve.data_xs, curve.data_ys)
+                item.sigPointsEdited.connect(self._on_points_edited)
+                self.plot_widget.addItem(item)
+                self._editable_item = item
+                self._editable_curve_id = curve.id
+            else:
+                pen = pg.mkPen(color=color, width=2)
+                self.plot_widget.plot(
+                    curve.data_xs, curve.data_ys,
+                    pen=pen, name=curve.name,
+                )
 
         sel_curve = next((c for c in self._curves if c.id == self._selected_curve_id), None)
         if sel_curve is not None and sel_curve.id in checked and sel_curve.data_xs.size >= 5:
