@@ -84,6 +84,7 @@ Practical test when unsure where code goes: *would a FastAPI endpoint need this?
 | `xstep.py` | `extract_curve(mask, …)` | The tracer. Four reducers — see §6. |
 | `interpolate.py` | `fill_gaps`, `fill_gaps_parametric`, `polynomial_best_fit`, `polynomial_best_fit_through_points`, `uniform_grid` | Gap filling and regression. `fill_gaps` is currently unused. |
 | `quality.py` | `curve_stats`, `detect_outliers` | Point count / x-range / largest gap, and MAD-based spike flagging. |
+| `pipeline.py` | `run_pipeline`, `apply_postprocessing`, `ExtractionParams`, `PipelineResult` | Qt-free extraction pipeline: extract → **smooth → fill** → best-fit (order matters). The one function the UI and a future FastAPI both call. Composes `xstep` + `interpolate`. |
 | `auto_detect.py` | `detect_plot_box`, `detect_curve_colors` | Pure OpenCV (**no OCR**). Tesseract axis-label reading is on the `feature/ocr` branch. |
 
 ### `io/`
@@ -299,10 +300,10 @@ CI (`.github/workflows/tests.yml`) runs the same suite on Ubuntu with
 
 ## 12. Known limitations / deferred
 
-- `main_window.py` (~990 lines) is a god object. Left alone deliberately — it is the layer
-  being replaced by React; refactoring it buys nothing.
-- `extract_curve_requested` / `extract_all_requested` carry 11 positional signal params. A
-  wart. If a 12th is ever needed, introduce an `ExtractionSettings` dataclass then, not now.
+- `main_window.py` (~780 lines) is a god object, left alone deliberately — it is the layer
+  being replaced by React. Extraction/processing logic has been evacuated to `core/pipeline.py`
+  (§4); what remains is Qt wiring. `extract_curve_requested` / `extract_all_requested` now carry
+  a single `ExtractionParams` object (previously 11 positional params).
 - `interpolate.fill_gaps` is unused (superseded by `fill_gaps_parametric`).
 - Tesseract OCR auto-calibration is parked on the `feature/ocr` branch (best-effort, needs
   Tesseract on PATH). Main keeps only deterministic OpenCV plot-box / curve-color detection.

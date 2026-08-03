@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 from PyQt6.QtCore import pyqtSignal, Qt
+
+from digitizer.core.pipeline import ExtractionParams
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -173,8 +175,8 @@ class CurvePanel(QWidget):
     auto_detect_curves_requested = pyqtSignal()
     
     # Manager signals
-    extract_curve_requested = pyqtSignal(int, int, bool, str, bool, int, int, int, int, bool, int)  # curve_id, dx, fill, reducer, smooth, window, poly, passes, upscale, bestfit, degree
-    extract_all_requested = pyqtSignal(int, bool, str, bool, int, int, int, int, bool, int)
+    extract_curve_requested = pyqtSignal(int, object)  # curve_id, ExtractionParams
+    extract_all_requested = pyqtSignal(object)          # ExtractionParams
     delete_curve_requested = pyqtSignal(int)
     select_curve_changed = pyqtSignal(int)
     curve_visibility_changed = pyqtSignal(int, bool)
@@ -373,36 +375,26 @@ class CurvePanel(QWidget):
         for cid, card in self._cards.items():
             card.set_selected(cid == curve_id)
 
-    def _on_extract_single(self, curve_id: int) -> None:
-        reducer = self._reducer_combo.currentData() or "mean"
-        self.extract_curve_requested.emit(
-            curve_id,
-            self._dx_spin.value(),
-            self._fill_cb.isChecked(),
-            str(reducer),
-            self._smooth_cb.isChecked(),
-            self._smooth_window.value(),
-            self._smooth_poly.value(),
-            self._smooth_passes.value(),
-            self._upscale_spin.value(),
-            self._bestfit_cb.isChecked(),
-            self._bestfit_degree.value(),
+    def _build_params(self) -> ExtractionParams:
+        """Snapshot the extraction-option widgets into a single params object."""
+        return ExtractionParams(
+            dx=self._dx_spin.value(),
+            reducer=str(self._reducer_combo.currentData() or "mean"),
+            upscale_factor=self._upscale_spin.value(),
+            fill=self._fill_cb.isChecked(),
+            smooth=self._smooth_cb.isChecked(),
+            smooth_window=self._smooth_window.value(),
+            poly_order=self._smooth_poly.value(),
+            passes=self._smooth_passes.value(),
+            bestfit=self._bestfit_cb.isChecked(),
+            bestfit_degree=self._bestfit_degree.value(),
         )
 
+    def _on_extract_single(self, curve_id: int) -> None:
+        self.extract_curve_requested.emit(curve_id, self._build_params())
+
     def _on_extract_all(self) -> None:
-        reducer = self._reducer_combo.currentData() or "mean"
-        self.extract_all_requested.emit(
-            self._dx_spin.value(),
-            self._fill_cb.isChecked(),
-            str(reducer),
-            self._smooth_cb.isChecked(),
-            self._smooth_window.value(),
-            self._smooth_poly.value(),
-            self._smooth_passes.value(),
-            self._upscale_spin.value(),
-            self._bestfit_cb.isChecked(),
-            self._bestfit_degree.value(),
-        )
+        self.extract_all_requested.emit(self._build_params())
 
     def uncheck_sample_button(self) -> None:
         self._sample_btn.setChecked(False)

@@ -19,6 +19,7 @@ from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
+from digitizer.core.pipeline import ExtractionParams
 from digitizer.ui.curve_panel import Curve
 from digitizer.ui.edit_panel import EditPanel
 from digitizer.ui.editable_curve_item import EditableCurveItem
@@ -368,10 +369,11 @@ def test_manually_edited_curve_warns_before_reextraction(window, monkeypatch):
     curve.manually_edited = True
     curve.data_xs = np.array([0.0, 1.0])
 
+    params = ExtractionParams(dx=2, fill=False, reducer="mean")
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.No))
-    window._run_xstep_for_curve(curve, dx=2, fill=False, reducer="mean")
+    window._run_xstep_for_curve(curve, params)
     assert curve.manually_edited is True  # declined -> guard left the flag untouched
 
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
-    window._run_xstep_for_curve(curve, dx=2, fill=False, reducer="mean")
+    window._run_xstep_for_curve(curve, params)
     assert curve.manually_edited is False  # accepted -> proceeded and cleared the flag

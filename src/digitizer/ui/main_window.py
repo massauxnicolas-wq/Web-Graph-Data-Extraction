@@ -19,8 +19,9 @@ from PyQt6.QtWidgets import (
 )
 
 from digitizer.core import calibration as calib_mod
-from digitizer.core import image_io, interpolate, masking, quality, transform, xstep
+from digitizer.core import image_io, masking, quality, transform
 from digitizer.core.auto_detect import detect_plot_box, detect_curve_colors
+from digitizer.core.pipeline import run_pipeline
 from digitizer.io import clipboard as clip_mod
 from digitizer.io import csv_export, json_export
 from digitizer.ui.calibration_panel import CalibrationPanel
@@ -454,26 +455,29 @@ class MainWindow(QMainWindow):
         x_hi = min(w - 1, int(max(xs)))
         return (x_lo, y_lo, x_hi, y_hi)
 
-    def _on_extract_single(self, curve_id: int, dx: int, fill: bool, reducer: str, smooth: bool, smooth_window: int, poly_order: int, passes: int, upscale_factor: int, bestfit: bool, bestfit_degree: int) -> None:
+    def _on_extract_single(self, curve_id: int, params) -> None:
         if curve_id not in self._curves_dict:
             return
         if self._calibration_M is None:
             QMessageBox.warning(self, "Not calibrated", "Solve calibration first before extracting.")
             return
-        self._run_xstep_for_curve(self._curves_dict[curve_id], dx, fill, reducer, smooth, smooth_window, poly_order, passes, upscale_factor, bestfit, bestfit_degree)
+        self._run_xstep_for_curve(self._curves_dict[curve_id], params)
 
-    def _on_extract_all(self, dx: int, fill: bool, reducer: str, smooth: bool, smooth_window: int, poly_order: int, passes: int, upscale_factor: int, bestfit: bool, bestfit_degree: int) -> None:
+    def _on_extract_all(self, params) -> None:
         if self._calibration_M is None:
             QMessageBox.warning(self, "Not calibrated", "Solve calibration first before extracting.")
             return
         for c in self._curves_dict.values():
             if c.visible:
-                self._run_xstep_for_curve(c, dx, fill, reducer, smooth, smooth_window, poly_order, passes, upscale_factor, bestfit, bestfit_degree)
+                self._run_xstep_for_curve(c, params)
 
-    def _run_xstep_for_curve(self, curve: Curve, dx: int, fill: bool, reducer: str,
-                             smooth: bool = False, smooth_window: int = 21,
-                             poly_order: int = 3, passes: int = 1, upscale_factor: int = 1,
-                             bestfit: bool = False, bestfit_degree: int = 3) -> None:
+    def _run_xstep_for_curve(self, curve: Curve, params) -> None:
+        """Thin UI adapter: build the mask, hand off to the Qt-free pipeline, show results.
+
+        All extraction/processing logic lives in digitizer.core.pipeline. This method keeps
+        only what needs Qt: the discard-edits prompt, mask construction from widget state,
+        calibration to data space, and status/canvas updates.
+        """
         if self._image_rgb is None:
             return
         if curve.manually_edited:
@@ -486,10 +490,10 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
             curve.manually_edited = False
-            
+
         tol = self.curve_panel.hsv_tol()
         mask = masking.hsv_mask(self._image_rgb, curve.hsv_center, tol)
-        
+
         exc_rect = self.image_view.get_exclusion_roi_rect()
         if exc_rect is not None:
             ex_x0, ex_y0, ex_x1, ex_y1 = exc_rect
@@ -500,51 +504,20 @@ class MainWindow(QMainWindow):
                 mask = mask.copy()
                 mask[ex_y0:ex_y1, ex_x0:ex_x1] = 0
 
-        bbox = self._calibration_bbox()
-        seed_x, seed_y = curve.seed_point if curve.seed_point is not None else (None, None)
-        end_x, end_y = curve.end_point if curve.end_point is not None else (None, None)
-        xs, ys = xstep.extract_curve(
-            mask, dx=dx, bbox=bbox, reducer=reducer, upscale_factor=upscale_factor,
-            seed_x=seed_x, seed_y=seed_y, end_x=end_x, end_y=end_y,
+        result = run_pipeline(
+            mask, params, bbox=self._calibration_bbox(),
+            seed=curve.seed_point, end=curve.end_point,
         )
-        if xs.size < 2:
+        for warning in result.warnings:
+            self.statusBar().showMessage(warning)
+        if result.xs.size < 2:
             self.statusBar().showMessage(f"X-Step found < 2 points for '{curve.name}'. Widen HSV tolerance.")
             return
-        # Marker removal (smooth) runs BEFORE gap fill: strip the diamond/star bumps
-        # off the raw extracted points first, then interpolate through the clean curve.
-        # Filling first would interpolate through bump-distorted points and leave a
-        # denser series that the fixed window smooths less effectively.
-        if smooth and xs.size >= smooth_window:
-            from scipy.signal import savgol_filter
-            win = smooth_window if smooth_window % 2 == 1 else smooth_window + 1
-            win = min(win, xs.size if xs.size % 2 == 1 else xs.size - 1)
-            poly = min(poly_order, win - 1)
-            if win >= 5 and poly >= 1:
-                for _ in range(passes):
-                    ys = savgol_filter(ys, window_length=win, polyorder=poly)
 
-        if fill:
-            try:
-                xs, ys = interpolate.fill_gaps_parametric(xs, ys, step=1.0)
-            except ValueError as exc:
-                self.statusBar().showMessage(f"Gap fill skipped: {exc}")
-
-        if bestfit:
-            try:
-                if curve.seed_point is not None and curve.end_point is not None:
-                    xs, ys = interpolate.polynomial_best_fit_through_points(
-                        xs, ys, bestfit_degree,
-                        curve.seed_point[0], curve.seed_point[1],
-                        curve.end_point[0], curve.end_point[1],
-                    )
-                else:
-                    xs, ys = interpolate.polynomial_best_fit(xs, ys, bestfit_degree)
-            except ValueError as exc:
-                self.statusBar().showMessage(f"Best-fit skipped: {exc}")
-
+        xs, ys = result.xs, result.ys
         curve.pixel_xs = xs
         curve.pixel_ys = ys
-        
+
         if self._calibration_M is not None:
             pts_pixel = np.column_stack([xs, ys])
             pts_data = transform.pixel_to_data(pts_pixel, self._calibration_M)
