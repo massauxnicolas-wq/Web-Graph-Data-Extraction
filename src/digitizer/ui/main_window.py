@@ -510,12 +510,10 @@ class MainWindow(QMainWindow):
         if xs.size < 2:
             self.statusBar().showMessage(f"X-Step found < 2 points for '{curve.name}'. Widen HSV tolerance.")
             return
-        if fill:
-            try:
-                xs, ys = interpolate.fill_gaps_parametric(xs, ys, step=1.0)
-            except ValueError as exc:
-                self.statusBar().showMessage(f"Gap fill skipped: {exc}")
-        
+        # Marker removal (smooth) runs BEFORE gap fill: strip the diamond/star bumps
+        # off the raw extracted points first, then interpolate through the clean curve.
+        # Filling first would interpolate through bump-distorted points and leave a
+        # denser series that the fixed window smooths less effectively.
         if smooth and xs.size >= smooth_window:
             from scipy.signal import savgol_filter
             win = smooth_window if smooth_window % 2 == 1 else smooth_window + 1
@@ -524,6 +522,12 @@ class MainWindow(QMainWindow):
             if win >= 5 and poly >= 1:
                 for _ in range(passes):
                     ys = savgol_filter(ys, window_length=win, polyorder=poly)
+
+        if fill:
+            try:
+                xs, ys = interpolate.fill_gaps_parametric(xs, ys, step=1.0)
+            except ValueError as exc:
+                self.statusBar().showMessage(f"Gap fill skipped: {exc}")
 
         if bestfit:
             try:
