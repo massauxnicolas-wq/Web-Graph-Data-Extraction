@@ -35,8 +35,8 @@ python -m digitizer
 python -m pytest -q
 ```
 
-Requires Python ≥ 3.10. `pytesseract` needs the Tesseract binary on PATH for OCR
-auto-calibration only; everything else (including plot-box detection) works without it.
+Requires Python ≥ 3.10. Tesseract OCR auto-calibration lives on the `feature/ocr`
+branch, not on main; main has no external binary dependency.
 
 Sample charts for manual testing live in `graphs/`.
 
@@ -84,7 +84,7 @@ Practical test when unsure where code goes: *would a FastAPI endpoint need this?
 | `xstep.py` | `extract_curve(mask, …)` | The tracer. Four reducers — see §6. |
 | `interpolate.py` | `fill_gaps`, `fill_gaps_parametric`, `polynomial_best_fit`, `polynomial_best_fit_through_points`, `uniform_grid` | Gap filling and regression. `fill_gaps` is currently unused. |
 | `quality.py` | `curve_stats`, `detect_outliers` | Point count / x-range / largest gap, and MAD-based spike flagging. |
-| `auto_detect.py` | `detect_plot_box`, `detect_axis_labels`, `detect_curve_colors`, `generate_debug_overlay` | `detect_plot_box` is pure OpenCV (**no OCR**); `detect_axis_labels` needs Tesseract. |
+| `auto_detect.py` | `detect_plot_box`, `detect_curve_colors` | Pure OpenCV (**no OCR**). Tesseract axis-label reading is on the `feature/ocr` branch. |
 
 ### `io/`
 `csv_export.write_curve_csv` / `write_curves_wide`, `json_export.build_payload` /
@@ -173,7 +173,7 @@ Left: `ImageView` canvas (shared across all tabs). Right: a 4-tab panel.
 
 | Tab | Panel | Purpose |
 |---|---|---|
-| 1. Calibrate | `calibration_panel.py` | Place/drag Origin, X-max, Y-max (+ optional 4th for skew), enter axis values, solve. Auto-calibrate via OCR optional. |
+| 1. Calibrate | `calibration_panel.py` | Place/drag Origin, X-max, Y-max (+ optional 4th for skew), enter axis values, solve. |
 | 2. Curves | `curve_panel.py` | Sample curve colours, tune HSV, choose reducer, extract. |
 | 3. Editing | `edit_panel.py` | Toggle canvas point editing, image opacity, delete point / outliers, quality stats. |
 | 4. Export | `export_dialog.py` | Check curves, write CSV/JSON/clipboard. |
@@ -304,5 +304,6 @@ CI (`.github/workflows/tests.yml`) runs the same suite on Ubuntu with
 - `extract_curve_requested` / `extract_all_requested` carry 11 positional signal params. A
   wart. If a 12th is ever needed, introduce an `ExtractionSettings` dataclass then, not now.
 - `interpolate.fill_gaps` is unused (superseded by `fill_gaps_parametric`).
-- OCR auto-calibration is best-effort and needs Tesseract on PATH; plot-box detection does not.
+- Tesseract OCR auto-calibration is parked on the `feature/ocr` branch (best-effort, needs
+  Tesseract on PATH). Main keeps only deterministic OpenCV plot-box / curve-color detection.
 - Session JSON is write-only — no reload. The schema is forward-compatible with adding it.

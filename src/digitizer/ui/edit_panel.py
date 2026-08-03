@@ -32,7 +32,6 @@ class EditPanel(QWidget):
     delete_point_requested = pyqtSignal()
     delete_outliers_requested = pyqtSignal()
     refresh_requested = pyqtSignal()
-    expert_debug_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -113,11 +112,6 @@ class EditPanel(QWidget):
         self._quality_lbl.setWordWrap(True)
         ql.addWidget(self._quality_lbl)
         layout.addWidget(quality_box)
-
-        self._debug_btn = QPushButton("🔍 Show Expert Debug Plot")
-        self._debug_btn.setToolTip("Matplotlib window with the original image, extracted curves and OCR overlay.")
-        self._debug_btn.clicked.connect(self.expert_debug_requested)
-        layout.addWidget(self._debug_btn)
 
         layout.addStretch(1)
 

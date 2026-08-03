@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -28,8 +28,6 @@ class CalibrationPanel(QWidget):
     cancel_capture = pyqtSignal()
     solve_requested = pyqtSignal()
     reset_requested = pyqtSignal()
-    auto_calibrate_requested = pyqtSignal()
-    debug_overlay_requested = pyqtSignal()
     points_changed = pyqtSignal(list)  # emitted when captured points are changed other than by a fresh click
 
     LABELS = ("Origin", "X-axis max", "Y-axis max", "Top-Right (Optional)")
@@ -39,49 +37,6 @@ class CalibrationPanel(QWidget):
         self._target_count = 3
         self._captured: list[tuple[float, float]] = []
         layout = QVBoxLayout(self)
-
-        # --- Auto-Calibrate Section ---
-        auto_box = QGroupBox("Automatic Calibration")
-        auto_layout = QVBoxLayout(auto_box)
-        auto_desc = QLabel(
-            "Uses OCR to automatically detect the plot grid, axis values, and labels."
-        )
-        auto_desc.setWordWrap(True)
-        auto_desc.setStyleSheet("QLabel { font-size: 12px; color: #555; }")
-        auto_layout.addWidget(auto_desc)
-
-        self._auto_btn = QPushButton("⚡ Auto-Calibrate (OCR)")
-        self._auto_btn.setStyleSheet(
-            "QPushButton { font-size: 14px; font-weight: bold; padding: 8px; "
-            "background-color: #0078d4; color: white; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #106ebe; }"
-            "QPushButton:disabled { background-color: #999; }"
-        )
-        self._auto_btn.clicked.connect(self.auto_calibrate_requested)
-
-        self._debug_btn = QPushButton("\U0001f50d Debug")
-        self._debug_btn.setStyleSheet(
-            "QPushButton { font-size: 12px; padding: 8px; "
-            "background-color: #444; color: white; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #666; }"
-        )
-        self._debug_btn.clicked.connect(self.debug_overlay_requested)
-
-        btn_row = QHBoxLayout()
-        btn_row.addWidget(self._auto_btn, stretch=3)
-        btn_row.addWidget(self._debug_btn, stretch=1)
-        auto_layout.addLayout(btn_row)
-
-        self._auto_status = QLabel("")
-        self._auto_status.setWordWrap(True)
-        self._auto_status.setStyleSheet("QLabel { font-size: 11px; color: #666; }")
-        auto_layout.addWidget(self._auto_status)
-        layout.addWidget(auto_box)
-
-        separator = QLabel("— OR calibrate manually —")
-        separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        separator.setStyleSheet("QLabel { font-size: 12px; color: #999; margin: 6px 0; }")
-        layout.addWidget(separator)
 
         # --- Manual Calibration Section ---
         manual_box = QGroupBox("Manual Calibration")
@@ -261,21 +216,3 @@ class CalibrationPanel(QWidget):
     def set_solved_status(self, ok: bool, message: str) -> None:
         prefix = "Solved" if ok else "Error"
         self._error_label.setText(f"Calibration: {prefix} — {message}")
-
-    # --- Auto-Calibrate helpers ---
-    def set_auto_status(self, text: str) -> None:
-        self._auto_status.setText(text)
-
-    def set_auto_enabled(self, enabled: bool) -> None:
-        self._auto_btn.setEnabled(enabled)
-        if not enabled:
-            self._auto_btn.setText("⏳ Detecting...")
-        else:
-            self._auto_btn.setText("⚡ Auto-Calibrate (OCR)")
-
-    def set_axis_values(self, x_origin: float, y_origin: float, x_max: float, y_max: float) -> None:
-        """Programmatically set the axis value spinboxes."""
-        self._x_origin.setValue(x_origin)
-        self._y_origin.setValue(y_origin)
-        self._x_max.setValue(x_max)
-        self._y_max.setValue(y_max)
