@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from digitizer.core import quality
+from digitizer.core import analysis, quality
 from digitizer.ui.curve_panel import Curve
 
 
@@ -166,7 +166,10 @@ class EditPanel(QWidget):
         stats = quality.curve_stats(xs, ys)
         outliers = quality.detect_outliers(xs, ys)
         x0, x1 = stats["x_range"]
+        m = analysis.curve_metrics(xs, ys)
         self._quality_lbl.setText(
             f"{stats['count']} points | X: {x0:.3g} to {x1:.3g} | "
-            f"largest gap: {stats['largest_gap']:.3g} | {int(outliers.sum())} outlier(s) flagged"
+            f"largest gap: {stats['largest_gap']:.3g} | {int(outliers.sum())} outlier(s) flagged\n"
+            f"area = {m['area']:.4g}  |  initial slope = {m['initial_slope']:.4g}  |  "
+            f"peak = ({m['peak_x']:.3g}, {m['peak_y']:.3g})"
         )
