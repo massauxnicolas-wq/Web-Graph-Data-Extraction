@@ -78,8 +78,8 @@ Practical test when unsure where code goes: *would a FastAPI endpoint need this?
 | Module | Public API | Notes |
 |---|---|---|
 | `image_io.py` | `load_image(path)` | Returns RGB ndarray. Unicode-safe on Windows (`np.fromfile` + `imdecode`). |
-| `calibration.py` | `affine_from_points(pixel_pts, data_pts)`, `round_trip_error(M, …)` | 3 points → exact affine; 4 → perspective; >4 → least-squares homography. Returns a 3×3 `M`. |
-| `transform.py` | `pixel_to_data(pts, M)`, `data_to_pixel(pts, M)` | The only sanctioned way to move between coordinate spaces. See §5. |
+| `calibration.py` | `affine_from_points`, `round_trip_error` (linear primitives); `Calibration(M, x_log, y_log)`, `solve_calibration`, `calibration_error` | 3 pts → affine, 4 → perspective, >4 → homography. `solve_calibration` wraps that with per-axis **log10** handling (log axes calibrated in log space; positive values required). |
+| `transform.py` | `pixel_to_data(pts, cal)`, `data_to_pixel(pts, cal)` | The only sanctioned way to move between coordinate spaces (§5). Take a `Calibration`; apply `M` then `10**` on log axes. |
 | `masking.py` | `rgb_pixel_to_hsv`, `hsv_mask`, `mask_overlay_rgba` | HSV colour selection; handles hue wraparound at 180. |
 | `xstep.py` | `extract_curve(mask, …)` | The tracer. Four reducers — see §6. |
 | `interpolate.py` | `fill_gaps`, `fill_gaps_parametric`, `polynomial_best_fit`, `polynomial_best_fit_through_points`, `uniform_grid` | Gap filling and regression. `fill_gaps` is currently unused. |
@@ -89,7 +89,8 @@ Practical test when unsure where code goes: *would a FastAPI endpoint need this?
 
 ### `io/`
 `csv_export.write_curve_csv` / `write_curves_wide`, `json_export.build_payload` /
-`serialize_curve` / `write_payload` (schema `digitizer/0.1`) — all Qt-free.
+`serialize_curve` / `write_payload` (schema `digitizer/0.2`), and `json_load.load_payload`
+→ `LoadedSession` (the inverse; accepts `0.1` and `0.2`) — all Qt-free.
 `clipboard.copy_curve_tsv` builds the TSV string *and* pushes it to the system clipboard via
 `QGuiApplication`; it returns the string, so the formatting half is testable without a
 clipboard.
@@ -307,4 +308,5 @@ CI (`.github/workflows/tests.yml`) runs the same suite on Ubuntu with
 - `interpolate.fill_gaps` is unused (superseded by `fill_gaps_parametric`).
 - Tesseract OCR auto-calibration is parked on the `feature/ocr` branch (best-effort, needs
   Tesseract on PATH). Main keeps only deterministic OpenCV plot-box / curve-color detection.
-- Session JSON is write-only — no reload. The schema is forward-compatible with adding it.
+- Session JSON now has a Qt-free loader (`json_load.load_payload`), but **restoring it into the
+  running app** (rebuilding curves/markers/widgets) is not wired — deferred to the React frontend.

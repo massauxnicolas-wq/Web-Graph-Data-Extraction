@@ -1,9 +1,59 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 
 import cv2
+
+
+@dataclass
+class Calibration:
+    """A solved calibration: the 3x3 pixel->calibration-space matrix plus per-axis log flags.
+
+    For a linear axis, calibration space *is* data space. For a log axis, calibration space is
+    log10(data) — the solve and transforms handle the log/exp so callers only ever see data
+    values. This is the object the project file serialises and FastAPI will return.
+    """
+    M: np.ndarray
+    x_log: bool = False
+    y_log: bool = False
+
+
+def _to_calib_space(data_pts: np.ndarray, x_log: bool, y_log: bool) -> np.ndarray:
+    """Map data values into calibration space (log10 on log axes)."""
+    out = np.array(data_pts, dtype=float, copy=True)
+    if out.ndim == 1:
+        out = out[None, :]
+    if x_log:
+        out[:, 0] = np.log10(out[:, 0])
+    if y_log:
+        out[:, 1] = np.log10(out[:, 1])
+    return out
+
+
+def solve_calibration(
+    pixel_pts: np.ndarray, data_pts: np.ndarray, x_log: bool = False, y_log: bool = False,
+) -> Calibration:
+    """Solve a calibration, optionally treating either axis as logarithmic.
+
+    Log axes are calibrated in log10 space, so the same linear solver handles them. Data values
+    on a log axis must be strictly positive.
+    """
+    data_pts = np.asarray(data_pts, dtype=float)
+    if x_log and (data_pts[:, 0] <= 0).any():
+        raise ValueError("logarithmic X-axis requires positive axis values")
+    if y_log and (data_pts[:, 1] <= 0).any():
+        raise ValueError("logarithmic Y-axis requires positive axis values")
+    M = affine_from_points(pixel_pts, _to_calib_space(data_pts, x_log, y_log))
+    return Calibration(M=M, x_log=x_log, y_log=y_log)
+
+
+def calibration_error(cal: Calibration, pixel_pts: np.ndarray, data_pts: np.ndarray) -> float:
+    """Max round-trip error in calibration space (identical to round_trip_error when linear)."""
+    calib_pts = _to_calib_space(np.asarray(data_pts, dtype=float), cal.x_log, cal.y_log)
+    return round_trip_error(cal.M, pixel_pts, calib_pts)
 
 
 def affine_from_points(pixel_pts: np.ndarray, data_pts: np.ndarray) -> np.ndarray:

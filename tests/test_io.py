@@ -45,7 +45,7 @@ def test_write_curves_wide_rejects_empty_list(tmp_path):
 def test_build_payload_serializes_matrix():
     M = np.eye(3)
     payload = build_payload("img.png", M, [{"x": 1, "y": 2}], curves=[])
-    assert payload["schema"] == "digitizer/0.1"
+    assert payload["schema"] == "digitizer/0.2"
     assert payload["calibration"]["matrix"] == M.tolist()
 
 
@@ -69,7 +69,7 @@ def test_write_payload_roundtrip(tmp_path):
     path = tmp_path / "session.json"
     payload = build_payload("img.png", np.eye(3), [], curves=[])
     write_payload(path, payload)
-    assert json.loads(path.read_text())["schema"] == "digitizer/0.1"
+    assert json.loads(path.read_text())["schema"] == "digitizer/0.2"
 
 
 def test_load_image_missing_file_raises(tmp_path):

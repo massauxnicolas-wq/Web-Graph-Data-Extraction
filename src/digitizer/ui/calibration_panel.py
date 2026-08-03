@@ -119,6 +119,14 @@ class CalibrationPanel(QWidget):
         self._y_max.setToolTip("Plot value on the Y-axis at the Y-max point")
         form.addRow("Y-axis max value:", self._y_max)
 
+        self._x_log_cb = QCheckBox("Logarithmic X-axis")
+        self._x_log_cb.setToolTip("Treat the X-axis as base-10 logarithmic. X values must be > 0.")
+        form.addRow("", self._x_log_cb)
+
+        self._y_log_cb = QCheckBox("Logarithmic Y-axis")
+        self._y_log_cb.setToolTip("Treat the Y-axis as base-10 logarithmic. Y values must be > 0.")
+        form.addRow("", self._y_log_cb)
+
         layout.addWidget(val_box)
 
         btns = QHBoxLayout()
@@ -154,6 +162,12 @@ class CalibrationPanel(QWidget):
             lbl.setText("—")
         self._status.setText(f"Click points: 0/{self._target_count}")
         self._error_label.setText("Calibration: not solved")
+
+    def x_log(self) -> bool:
+        return self._x_log_cb.isChecked()
+
+    def y_log(self) -> bool:
+        return self._y_log_cb.isChecked()
 
     def add_pixel_point(self, x: float, y: float) -> bool:
         if len(self._captured) >= self._target_count:

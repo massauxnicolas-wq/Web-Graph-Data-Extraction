@@ -49,6 +49,8 @@ class MainWindow(QMainWindow):
         self._image_rgb: np.ndarray | None = None
         self._image_path: Path | None = None
         self._calibration_M: np.ndarray | None = None
+        self._calib_x_log: bool = False
+        self._calib_y_log: bool = False
         self._calibration_pixel_pts: list[tuple[float, float]] = []
         self._calibration_data_pts: list[tuple[float, float]] = []
         self._curves_dict: dict[int, Curve] = {}
@@ -346,15 +348,18 @@ class MainWindow(QMainWindow):
                 "X-axis or Y-axis range is zero — set non-zero max values before solving.",
             )
             return
+        x_log, y_log = self.calib_panel.x_log(), self.calib_panel.y_log()
         try:
-            M = calib_mod.affine_from_points(pixel_pts, data_pts)
+            cal = calib_mod.solve_calibration(pixel_pts, data_pts, x_log=x_log, y_log=y_log)
         except ValueError as exc:
             self.calib_panel.set_solved_status(False, str(exc))
             return
-        self._calibration_M = M
+        self._calibration_M = cal.M
+        self._calib_x_log = x_log
+        self._calib_y_log = y_log
         self._calibration_pixel_pts = [tuple(p) for p in pixel_pts.tolist()]
         self._calibration_data_pts = [tuple(p) for p in data_pts.tolist()]
-        err = calib_mod.round_trip_error(M, pixel_pts, data_pts)
+        err = calib_mod.calibration_error(cal, pixel_pts, data_pts)
         self._recompute_curve_data()
         self._draw_calibration_grid()
         self.image_view.set_plotbox_preview(None)
@@ -380,7 +385,7 @@ class MainWindow(QMainWindow):
             return
 
         def to_px(pts):
-            return transform.data_to_pixel(np.array(pts, dtype=float), self._calibration_M)
+            return transform.data_to_pixel(np.array(pts, dtype=float), self._calibration())
 
         lines = []
         for x in np.linspace(x_min, x_max, 10):
@@ -401,12 +406,22 @@ class MainWindow(QMainWindow):
             if c.pixel_xs.size == 0:
                 continue
             pts = np.column_stack([c.pixel_xs, c.pixel_ys])
-            data = transform.pixel_to_data(pts, self._calibration_M)
+            data = transform.pixel_to_data(pts, self._calibration())
             c.data_xs = data[:, 0]
             c.data_ys = data[:, 1]
 
+    def _calibration(self) -> calib_mod.Calibration:
+        """Bundle the stored matrix + log flags into a Calibration for transform calls.
+
+        Only call after checking `self._calibration_M is not None` (every call site does).
+        """
+        assert self._calibration_M is not None
+        return calib_mod.Calibration(self._calibration_M, self._calib_x_log, self._calib_y_log)
+
     def _reset_calibration(self) -> None:
         self._calibration_M = None
+        self._calib_x_log = False
+        self._calib_y_log = False
         self._calibration_pixel_pts.clear()
         self._calibration_data_pts.clear()
         self.image_view.set_calibration_markers([], [])
@@ -520,7 +535,7 @@ class MainWindow(QMainWindow):
 
         if self._calibration_M is not None:
             pts_pixel = np.column_stack([xs, ys])
-            pts_data = transform.pixel_to_data(pts_pixel, self._calibration_M)
+            pts_data = transform.pixel_to_data(pts_pixel, self._calibration())
             curve.data_xs = pts_data[:, 0]
             curve.data_ys = pts_data[:, 1]
             
@@ -626,7 +641,7 @@ class MainWindow(QMainWindow):
         c.manually_edited = True
         if self._calibration_M is not None and c.pixel_xs.size:
             pts_pixel = np.column_stack([c.pixel_xs, c.pixel_ys])
-            pts_data = transform.pixel_to_data(pts_pixel, self._calibration_M)
+            pts_data = transform.pixel_to_data(pts_pixel, self._calibration())
             c.data_xs = pts_data[:, 0]
             c.data_ys = pts_data[:, 1]
         self.edit_panel.update_quality(c.pixel_xs, c.pixel_ys)
@@ -697,6 +712,7 @@ class MainWindow(QMainWindow):
             json_export.serialize_curve(
                 c.name, c.hsv_center, c.hsv_tol,
                 c.pixel_xs, c.pixel_ys, c.data_xs, c.data_ys,
+                seed_point=c.seed_point, end_point=c.end_point, display_color=c.display_color,
             )
             for c in self._curves_dict.values()
         ]
@@ -705,6 +721,8 @@ class MainWindow(QMainWindow):
             self._calibration_M,
             calib_pts_payload,
             curves_payload,
+            x_log=self._calib_x_log,
+            y_log=self._calib_y_log,
         )
         json_export.write_payload(path_str, payload)
         self.statusBar().showMessage(f"Wrote {path_str}")
