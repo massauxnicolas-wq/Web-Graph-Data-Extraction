@@ -6,9 +6,6 @@ dist/
 .venv/
 venv/
 
-# agent-only notes, not part of the public repo
-CLAUDE.md
-
 # local run output, not source
 /*.csv
 /session.json
