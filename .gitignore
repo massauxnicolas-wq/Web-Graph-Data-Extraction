@@ -10,3 +10,6 @@ venv/
 /*.csv
 /session.json
 scratch/
+
+# OCR experiment debug output (generated, not source)
+src/digitizer/experiments/
