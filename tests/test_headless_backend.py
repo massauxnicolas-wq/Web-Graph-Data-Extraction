@@ -24,7 +24,7 @@ def test_backend_layer_imports_without_pyqt():
         for p in sorted(core_dir.glob("*.py"))
         if p.stem != "__init__"
     ]
-    modules += ["digitizer.io.csv_export", "digitizer.io.json_export"]
+    modules += ["digitizer.io.json_export", "digitizer.io.json_load"]
 
     code = (
         "import importlib, sys\n"

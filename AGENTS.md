@@ -85,15 +85,15 @@ Practical test when unsure where code goes: *would a FastAPI endpoint need this?
 | `interpolate.py` | `fill_gaps`, `fill_gaps_parametric`, `polynomial_best_fit`, `polynomial_best_fit_through_points`, `uniform_grid` | Gap filling and regression. `fill_gaps` is currently unused. |
 | `quality.py` | `curve_stats`, `detect_outliers` | Point count / x-range / largest gap, and MAD-based spike flagging. |
 | `pipeline.py` | `run_pipeline`, `apply_postprocessing`, `ExtractionParams`, `PipelineResult` | Qt-free extraction pipeline: extract → **smooth → fill** → best-fit (order matters). The one function the UI and a future FastAPI both call. Composes `xstep` + `interpolate`. |
+| `export.py` | `NamedSeries`, `ExportOptions`, `Table`, `build_tables`, `serialize_delimited` | The single tabular-export model: series + options (resample / unit-convert / uncertainty) → Table(s) → CSV/TSV string. All CSV/TSV output routes through here. |
+| `units.py` | `convert(values, from, to)` | Built-in unit conversions (stress / temperature / strain / length / accel). No dependency; raises on unknown or cross-family. |
 | `auto_detect.py` | `detect_plot_box`, `detect_curve_colors` | Pure OpenCV (**no OCR**). Tesseract axis-label reading is on the `feature/ocr` branch. |
 
 ### `io/`
-`csv_export.write_curve_csv` / `write_curves_wide`, `json_export.build_payload` /
-`serialize_curve` / `write_payload` (schema `digitizer/0.2`), and `json_load.load_payload`
-→ `LoadedSession` (the inverse; accepts `0.1` and `0.2`) — all Qt-free.
-`clipboard.copy_curve_tsv` builds the TSV string *and* pushes it to the system clipboard via
-`QGuiApplication`; it returns the string, so the formatting half is testable without a
-clipboard.
+`json_export.build_payload` / `serialize_curve` / `write_payload` (schema `digitizer/0.2`) and
+`json_load.load_payload` → `LoadedSession` (the inverse; accepts `0.1` and `0.2`) — all Qt-free.
+Tabular data export (CSV/TSV) lives in `core/export.py`, not here. `clipboard.set_clipboard(text)`
+is the pure Qt sink (the one sanctioned Qt user in `io/`).
 
 ### `ui/`
 

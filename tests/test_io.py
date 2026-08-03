@@ -1,45 +1,13 @@
-import csv
 import json
 
 import numpy as np
 import pytest
 
 from digitizer.core.image_io import load_image
-from digitizer.io.csv_export import write_curve_csv, write_curves_wide
 from digitizer.io.json_export import build_payload, serialize_curve, write_payload
 
 
-def test_write_curve_csv_roundtrip(tmp_path):
-    path = tmp_path / "curve.csv"
-    write_curve_csv(path, xs=[0.0, 1.0, 2.0], ys=[10.0, 20.0, 30.0])
-    with path.open(newline="") as fh:
-        rows = list(csv.reader(fh))
-    assert rows[0] == ["x", "y"]
-    assert rows[1:] == [["0.0", "10.0"], ["1.0", "20.0"], ["2.0", "30.0"]]
-
-
-def test_write_curve_csv_rejects_shape_mismatch(tmp_path):
-    with pytest.raises(ValueError, match="shape"):
-        write_curve_csv(tmp_path / "curve.csv", xs=[0, 1], ys=[0])
-
-
-def test_write_curves_wide_pads_uneven_lengths(tmp_path):
-    path = tmp_path / "wide.csv"
-    curves = [
-        ("a", np.array([1, 2, 3]), np.array([10, 20, 30])),
-        ("b", np.array([1]), np.array([100])),
-    ]
-    write_curves_wide(path, curves)
-    with path.open(newline="") as fh:
-        rows = list(csv.reader(fh))
-    assert rows[0] == ["a_x", "a_y", "b_x", "b_y"]
-    assert rows[1] == ["1", "10", "1", "100"]
-    assert rows[2] == ["2", "20", "", ""]
-
-
-def test_write_curves_wide_rejects_empty_list(tmp_path):
-    with pytest.raises(ValueError, match="no curves"):
-        write_curves_wide(tmp_path / "wide.csv", [])
+# CSV serialisation now lives in core/export.py — see tests/test_export.py.
 
 
 def test_build_payload_serializes_matrix():

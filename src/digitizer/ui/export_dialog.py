@@ -5,16 +5,21 @@ import numpy as np
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
+from digitizer.core.export import ExportOptions
 from digitizer.ui.curve_panel import Curve
 
 
@@ -54,17 +59,11 @@ class ExportCurveRow(QFrame):
 
 
 class ExportPanel(QWidget):
-    """Plain export panel: pick curves, write files.
+    """Two jobs, kept separate: export data (CSV/TSV, with options) and save the project (JSON)."""
 
-    Preview, quality analysis and point editing all live in the Editing
-    tab - this one stays deliberately simple.
-    """
-
-    export_csv_active = pyqtSignal()
-    export_csv_wide = pyqtSignal()
-    export_csv_checked = pyqtSignal(list)  # list of curve_ids
-    export_json = pyqtSignal()
-    copy_clipboard = pyqtSignal()
+    export_csv_requested = pyqtSignal()
+    copy_tsv_requested = pyqtSignal()
+    save_project_requested = pyqtSignal()
     refresh_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -74,10 +73,9 @@ class ExportPanel(QWidget):
 
         layout = QVBoxLayout(self)
 
-        # --- Curve List ---
-        list_box = QGroupBox("Curves to Export")
+        # --- Curve list ---
+        list_box = QGroupBox("Curves")
         ll = QVBoxLayout(list_box)
-
         top_row = QHBoxLayout()
         self._select_all_btn = QPushButton("Select All")
         self._select_all_btn.clicked.connect(self._select_all)
@@ -99,38 +97,90 @@ class ExportPanel(QWidget):
         ll.addWidget(self.scroll_area)
         layout.addWidget(list_box, 1)
 
-        # --- Export Buttons ---
-        export_box = QGroupBox("Export")
+        # --- Options ---
+        opt_box = QGroupBox("Options")
+        form = QFormLayout(opt_box)
+
+        self._layout_combo = QComboBox()
+        self._layout_combo.addItem("Wide (one file, name_x/name_y columns)", userData="wide")
+        self._layout_combo.addItem("Individual files (one per curve)", userData="individual")
+        form.addRow("Layout:", self._layout_combo)
+
+        self._grid_spin = QDoubleSpinBox()
+        self._grid_spin.setRange(0.0, 1e9)
+        self._grid_spin.setDecimals(4)
+        self._grid_spin.setValue(0.0)
+        self._grid_spin.setToolTip("Resample to this uniform X step. 0 = keep raw extracted points.")
+        form.addRow("Resample X step:", self._grid_spin)
+
+        units_hint = "e.g. MPa, GPa, psi, %, ratio, mm, in, C, K, F — leave blank to skip"
+        self._x_from, self._x_to = QLineEdit(), QLineEdit()
+        self._x_from.setPlaceholderText("from")
+        self._x_to.setPlaceholderText("to")
+        form.addRow("Convert X:", self._unit_row(self._x_from, self._x_to, units_hint))
+        self._y_from, self._y_to = QLineEdit(), QLineEdit()
+        self._y_from.setPlaceholderText("from")
+        self._y_to.setPlaceholderText("to")
+        form.addRow("Convert Y:", self._unit_row(self._y_from, self._y_to, units_hint))
+
+        self._uncertainty_cb = QCheckBox("Include per-point uncertainty (±dy) columns")
+        form.addRow("", self._uncertainty_cb)
+        layout.addWidget(opt_box)
+
+        # --- Export data ---
+        export_box = QGroupBox("Export data")
         el = QVBoxLayout(export_box)
-
-        b_csv_checked = QPushButton("📁 Selected curves → individual CSVs")
-        b_csv_checked.setToolTip("Exports each checked curve to its own CSV file in a chosen folder.")
-        b_csv_checked.clicked.connect(self._on_export_checked)
-        el.addWidget(b_csv_checked)
-
-        b_csv_wide = QPushButton("📊 All curves → one wide CSV")
-        b_csv_wide.setToolTip("Exports all curves side-by-side into a single wide CSV.")
-        b_csv_wide.clicked.connect(self.export_csv_wide)
-        el.addWidget(b_csv_wide)
-
-        b_json = QPushButton("💾 Full session → JSON")
-        b_json.setToolTip("Saves calibration, HSV settings and all curve data.")
-        b_json.clicked.connect(self.export_json)
-        el.addWidget(b_json)
-
-        b_clip = QPushButton("📋 Active curve → clipboard (TSV)")
-        b_clip.setToolTip("Copies the selected curve as tab-separated values for pasting into Excel.")
-        b_clip.clicked.connect(self.copy_clipboard)
+        b_csv = QPushButton("📁 Export CSV (selected curves)")
+        b_csv.setToolTip("Wide layout → one file. Individual → a file per curve (choose a folder).")
+        b_csv.clicked.connect(self.export_csv_requested)
+        el.addWidget(b_csv)
+        b_clip = QPushButton("📋 Copy active curve → clipboard (TSV)")
+        b_clip.clicked.connect(self.copy_tsv_requested)
         el.addWidget(b_clip)
-
         layout.addWidget(export_box)
+
+        # --- Project ---
+        proj_box = QGroupBox("Project")
+        pl = QVBoxLayout(proj_box)
+        b_json = QPushButton("💾 Save session (JSON)")
+        b_json.setToolTip("Saves calibration, HSV settings and all curve data for the record.")
+        b_json.clicked.connect(self.save_project_requested)
+        pl.addWidget(b_json)
+        layout.addWidget(proj_box)
+
+    @staticmethod
+    def _unit_row(w_from: QLineEdit, w_to: QLineEdit, tooltip: str) -> QWidget:
+        w = QWidget()
+        row = QHBoxLayout(w)
+        row.setContentsMargins(0, 0, 0, 0)
+        w_from.setToolTip(tooltip)
+        w_to.setToolTip(tooltip)
+        row.addWidget(w_from)
+        row.addWidget(QLabel("→"))
+        row.addWidget(w_to)
+        return w
+
+    # --- state read by main_window -----------------------------------------
+    def export_options(self) -> ExportOptions:
+        step = self._grid_spin.value()
+        return ExportOptions(
+            layout=str(self._layout_combo.currentData() or "wide"),
+            x_grid_step=step if step > 0 else None,
+            x_unit=self._unit_pair(self._x_from, self._x_to),
+            y_unit=self._unit_pair(self._y_from, self._y_to),
+            include_uncertainty=self._uncertainty_cb.isChecked(),
+        )
+
+    @staticmethod
+    def _unit_pair(w_from: QLineEdit, w_to: QLineEdit) -> tuple[str, str] | None:
+        a, b = w_from.text().strip(), w_to.text().strip()
+        return (a, b) if a and b else None
 
     def populate_curves(self, curves: list[Curve]) -> None:
         for row in self._rows.values():
             self.scroll_layout.removeWidget(row)
             row.deleteLater()
         self._rows.clear()
-
         self._curves = list(curves)
         for curve in curves:
             row = ExportCurveRow(curve)
@@ -138,7 +188,6 @@ class ExportPanel(QWidget):
             self._rows[curve.id] = row
 
     def checked_curve_ids(self) -> list[int]:
-        """Return IDs of all checked curves."""
         return [cid for cid, row in self._rows.items() if row.is_checked()]
 
     def _select_all(self) -> None:
@@ -148,8 +197,3 @@ class ExportPanel(QWidget):
     def _deselect_all(self) -> None:
         for row in self._rows.values():
             row.checkbox.setChecked(False)
-
-    def _on_export_checked(self) -> None:
-        ids = self.checked_curve_ids()
-        if ids:
-            self.export_csv_checked.emit(ids)

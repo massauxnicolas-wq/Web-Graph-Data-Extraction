@@ -22,8 +22,9 @@ from digitizer.core import calibration as calib_mod
 from digitizer.core import image_io, masking, quality, transform
 from digitizer.core.auto_detect import detect_plot_box, detect_curve_colors
 from digitizer.core.pipeline import run_pipeline
+from digitizer.core.export import NamedSeries, build_tables, serialize_delimited
 from digitizer.io import clipboard as clip_mod
-from digitizer.io import csv_export, json_export
+from digitizer.io import json_export
 from digitizer.ui.calibration_panel import CalibrationPanel
 from digitizer.ui.curve_panel import Curve, CurvePanel
 from digitizer.ui.edit_panel import EditPanel
@@ -100,11 +101,9 @@ class MainWindow(QMainWindow):
         self.image_view.edit_selection_changed.connect(self._on_edit_selection_changed)
 
         self.export_panel = ExportPanel()
-        self.export_panel.export_csv_active.connect(self._export_csv_active)
-        self.export_panel.export_csv_wide.connect(self._export_csv_wide)
-        self.export_panel.export_csv_checked.connect(self._export_csv_checked)
-        self.export_panel.export_json.connect(self._export_json)
-        self.export_panel.copy_clipboard.connect(self._copy_clipboard)
+        self.export_panel.export_csv_requested.connect(self._export_csv)
+        self.export_panel.copy_tsv_requested.connect(self._copy_tsv)
+        self.export_panel.save_project_requested.connect(self._save_project)
         self.export_panel.refresh_requested.connect(self._refresh_export_panel)
 
         self._tabs = QTabWidget()
@@ -674,31 +673,55 @@ class MainWindow(QMainWindow):
             return self._curves_dict.get(cid)
         return None
 
-    def _export_csv_active(self) -> None:
+    def _named_series(self, curves: list[Curve]) -> list[NamedSeries]:
+        return [NamedSeries(c.name, c.data_xs, c.data_ys)
+                for c in curves if c.data_xs.size > 0]
+
+    def _export_csv(self) -> None:
+        ids = self.export_panel.checked_curve_ids()
+        curves = [self._curves_dict[cid] for cid in ids if cid in self._curves_dict]
+        series = self._named_series(curves)
+        if not series:
+            QMessageBox.warning(self, "No curves", "Select at least one extracted curve.")
+            return
+        opts = self.export_panel.export_options()
+        try:
+            tables = build_tables(series, opts)
+        except ValueError as exc:  # e.g. an unknown unit
+            QMessageBox.warning(self, "Export failed", str(exc))
+            return
+
+        if opts.layout == "individual" and len(tables) > 1:
+            folder = QFileDialog.getExistingDirectory(self, "Choose folder for CSVs")
+            if not folder:
+                return
+            for s, table in zip(series, tables):
+                (Path(folder) / f"{s.name}.csv").write_text(serialize_delimited(table), encoding="utf-8")
+            self.statusBar().showMessage(f"Exported {len(tables)} curves to {folder}")
+        else:
+            default = f"{series[0].name}.csv" if len(series) == 1 else "curves.csv"
+            path_str, _ = QFileDialog.getSaveFileName(self, "Save CSV", default, "CSV (*.csv)")
+            if not path_str:
+                return
+            Path(path_str).write_text(serialize_delimited(tables[0]), encoding="utf-8")
+            self.statusBar().showMessage(f"Wrote {path_str}")
+
+    def _copy_tsv(self) -> None:
         c = self._selected_curve()
-        if c is None:
-            QMessageBox.warning(self, "No curve", "Select a curve first.")
+        if c is None or c.data_xs.size == 0:
+            QMessageBox.warning(self, "No curve", "Select an extracted curve first.")
             return
-        path_str, _ = QFileDialog.getSaveFileName(self, "Save curve CSV", f"{c.name}.csv", "CSV (*.csv)")
-        if not path_str:
+        opts = self.export_panel.export_options()
+        opts.layout = "individual"
+        try:
+            (table,) = build_tables([NamedSeries(c.name, c.data_xs, c.data_ys)], opts)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Copy failed", str(exc))
             return
-        csv_export.write_curve_csv(path_str, c.data_xs, c.data_ys)
-        self.statusBar().showMessage(f"Wrote {path_str}")
+        clip_mod.set_clipboard(serialize_delimited(table, "\t"))
+        self.statusBar().showMessage(f"Copied '{c.name}' to clipboard.")
 
-    def _export_csv_wide(self) -> None:
-        if not self._curves_dict:
-            QMessageBox.warning(self, "No curves", "Add at least one curve first.")
-            return
-        path_str, _ = QFileDialog.getSaveFileName(self, "Save wide CSV", "curves.csv", "CSV (*.csv)")
-        if not path_str:
-            return
-        csv_export.write_curves_wide(
-            path_str,
-            [(c.name, c.data_xs, c.data_ys) for c in self._curves_dict.values()],
-        )
-        self.statusBar().showMessage(f"Wrote {path_str}")
-
-    def _export_json(self) -> None:
+    def _save_project(self) -> None:
         if self._image_rgb is None:
             return
         path_str, _ = QFileDialog.getSaveFileName(self, "Save session JSON", "session.json", "JSON (*.json)")
@@ -727,14 +750,6 @@ class MainWindow(QMainWindow):
         json_export.write_payload(path_str, payload)
         self.statusBar().showMessage(f"Wrote {path_str}")
 
-    def _copy_clipboard(self) -> None:
-        c = self._selected_curve()
-        if c is None:
-            QMessageBox.warning(self, "No curve", "Select a curve first.")
-            return
-        clip_mod.copy_curve_tsv(c.data_xs, c.data_ys)
-        self.statusBar().showMessage(f"Copied '{c.name}' to clipboard.")
-
     def _on_tab_changed(self, index: int) -> None:
         if index == 2:  # Editing
             self._refresh_edit_panel()
@@ -751,31 +766,4 @@ class MainWindow(QMainWindow):
     def _refresh_export_panel(self) -> None:
         curves = list(self._curves_dict.values())
         self.export_panel.populate_curves(curves)
-
-    def _export_csv_checked(self, curve_ids: list[int]) -> None:
-        curves = [self._curves_dict[cid] for cid in curve_ids if cid in self._curves_dict]
-        if not curves:
-            QMessageBox.warning(self, "No curves", "No curves selected for export.")
-            return
-        
-        if len(curves) == 1:
-            c = curves[0]
-            path_str, _ = QFileDialog.getSaveFileName(self, "Save curve CSV", f"{c.name}.csv", "CSV (*.csv)")
-            if not path_str:
-                return
-            csv_export.write_curve_csv(path_str, c.data_xs, c.data_ys)
-            self.statusBar().showMessage(f"Wrote {path_str}")
-        else:
-            folder = QFileDialog.getExistingDirectory(self, "Choose folder for CSVs")
-            if not folder:
-                return
-            from pathlib import Path
-            count = 0
-            for c in curves:
-                if c.data_xs.size == 0:
-                    continue
-                fpath = Path(folder) / f"{c.name}.csv"
-                csv_export.write_curve_csv(str(fpath), c.data_xs, c.data_ys)
-                count += 1
-            self.statusBar().showMessage(f"Exported {count} curves to {folder}")
 
