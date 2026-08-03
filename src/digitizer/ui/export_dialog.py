@@ -64,6 +64,7 @@ class ExportPanel(QWidget):
     export_csv_requested = pyqtSignal()
     copy_tsv_requested = pyqtSignal()
     save_project_requested = pyqtSignal()
+    save_profile_requested = pyqtSignal()
     refresh_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -146,6 +147,11 @@ class ExportPanel(QWidget):
         b_json.setToolTip("Saves calibration, HSV settings and all curve data for the record.")
         b_json.clicked.connect(self.save_project_requested)
         pl.addWidget(b_json)
+        b_profile = QPushButton("📐 Save extraction profile")
+        b_profile.setToolTip("Saves the reusable recipe (calibration + HSV + params) to re-apply "
+                             "to similar charts, e.g. with the digitizer-batch CLI.")
+        b_profile.clicked.connect(self.save_profile_requested)
+        pl.addWidget(b_profile)
         layout.addWidget(proj_box)
 
     @staticmethod

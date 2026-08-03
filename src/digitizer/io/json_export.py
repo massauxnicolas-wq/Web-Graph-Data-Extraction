@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,34 @@ def build_payload(
 
 def write_payload(path: str | Path, payload: dict[str, Any]) -> None:
     Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def build_profile(profile) -> dict[str, Any]:
+    """Serialise a core.profile.Profile (recipe: calibration + per-curve HSV/seed/end + params)."""
+    return {
+        "schema": "digitizer-profile/0.1",
+        "calibration": {
+            "pixel": [list(p) for p in profile.calibration_pixel_pts],
+            "data": [list(p) for p in profile.calibration_data_pts],
+            "x_log": profile.x_log,
+            "y_log": profile.y_log,
+        },
+        "params": asdict(profile.params),
+        "curves": [
+            {
+                "name": c.name,
+                "hsv_center": list(c.hsv_center),
+                "hsv_tol": list(c.hsv_tol),
+                "seed": list(c.seed) if c.seed is not None else None,
+                "end": list(c.end) if c.end is not None else None,
+            }
+            for c in profile.curves
+        ],
+    }
+
+
+def write_profile(path: str | Path, profile) -> None:
+    Path(path).write_text(json.dumps(build_profile(profile), indent=2), encoding="utf-8")
 
 
 def serialize_curve(

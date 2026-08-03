@@ -390,6 +390,10 @@ class CurvePanel(QWidget):
             bestfit_degree=self._bestfit_degree.value(),
         )
 
+    def extraction_params(self) -> ExtractionParams:
+        """Public snapshot of the current extraction options (for saving a profile)."""
+        return self._build_params()
+
     def _on_extract_single(self, curve_id: int) -> None:
         self.extract_curve_requested.emit(curve_id, self._build_params())
 

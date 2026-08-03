@@ -23,6 +23,7 @@ from digitizer.core import image_io, masking, quality, transform, uncertainty
 from digitizer.core.auto_detect import detect_plot_box, detect_curve_colors
 from digitizer.core.pipeline import run_pipeline
 from digitizer.core.export import NamedSeries, build_tables, serialize_delimited
+from digitizer.core.profile import Profile, ProfileCurve, plot_bbox
 from digitizer.io import clipboard as clip_mod
 from digitizer.io import json_export
 from digitizer.ui.calibration_panel import CalibrationPanel
@@ -104,6 +105,7 @@ class MainWindow(QMainWindow):
         self.export_panel.export_csv_requested.connect(self._export_csv)
         self.export_panel.copy_tsv_requested.connect(self._copy_tsv)
         self.export_panel.save_project_requested.connect(self._save_project)
+        self.export_panel.save_profile_requested.connect(self._save_profile)
         self.export_panel.refresh_requested.connect(self._refresh_export_panel)
 
         self._tabs = QTabWidget()
@@ -456,18 +458,8 @@ class MainWindow(QMainWindow):
         and a small buffer above the Y-axis-max row."""
         if not self._calibration_pixel_pts or self._image_rgb is None:
             return None
-        xs = [p[0] for p in self._calibration_pixel_pts]
-        ys = [p[1] for p in self._calibration_pixel_pts]
         h, w = self._image_rgb.shape[:2]
-        y_lo, y_hi = min(ys), max(ys)  # y_lo = top of plot, y_hi = origin row
-        plot_h = max(1, y_hi - y_lo)
-        below_margin = max(8, int(0.20 * plot_h))  # generous below origin
-        above_margin = max(4, int(0.05 * plot_h))  # tighter above y-max
-        y_lo = max(0, int(y_lo - above_margin))
-        y_hi = min(h - 1, int(y_hi + below_margin))
-        x_lo = max(0, int(min(xs)))
-        x_hi = min(w - 1, int(max(xs)))
-        return (x_lo, y_lo, x_hi, y_hi)
+        return plot_bbox(self._calibration_pixel_pts, h, w)
 
     def _on_extract_single(self, curve_id: int, params) -> None:
         if curve_id not in self._curves_dict:
@@ -728,6 +720,28 @@ class MainWindow(QMainWindow):
             return
         clip_mod.set_clipboard(serialize_delimited(table, "\t"))
         self.statusBar().showMessage(f"Copied '{c.name}' to clipboard.")
+
+    def _save_profile(self) -> None:
+        if self._calibration_M is None or not self._curves_dict:
+            QMessageBox.warning(self, "Nothing to save",
+                                "Calibrate and add at least one curve before saving a profile.")
+            return
+        path_str, _ = QFileDialog.getSaveFileName(self, "Save extraction profile", "profile.json", "JSON (*.json)")
+        if not path_str:
+            return
+        prof = Profile(
+            calibration_pixel_pts=list(self._calibration_pixel_pts),
+            calibration_data_pts=list(self._calibration_data_pts),
+            x_log=self._calib_x_log,
+            y_log=self._calib_y_log,
+            params=self.curve_panel.extraction_params(),
+            curves=[
+                ProfileCurve(c.name, c.hsv_center, c.hsv_tol, c.seed_point, c.end_point)
+                for c in self._curves_dict.values()
+            ],
+        )
+        json_export.write_profile(path_str, prof)
+        self.statusBar().showMessage(f"Wrote profile {path_str}")
 
     def _save_project(self) -> None:
         if self._image_rgb is None:

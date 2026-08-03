@@ -47,3 +47,33 @@ def load_payload(path: str | Path) -> LoadedSession:
         calibration_points=calib.get("points", []),
         curves=payload.get("curves", []),
     )
+
+
+def load_profile(path: str | Path):
+    """Parse an extraction profile (digitizer-profile/0.1) into a core.profile.Profile."""
+    from digitizer.core.pipeline import ExtractionParams
+    from digitizer.core.profile import Profile, ProfileCurve
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if payload.get("schema", "") != "digitizer-profile/0.1":
+        raise ValueError(f"not a digitizer profile (schema={payload.get('schema')!r})")
+
+    cal = payload.get("calibration", {})
+    curves = [
+        ProfileCurve(
+            name=c["name"],
+            hsv_center=tuple(c["hsv_center"]),
+            hsv_tol=tuple(c["hsv_tol"]),
+            seed=tuple(c["seed"]) if c.get("seed") is not None else None,
+            end=tuple(c["end"]) if c.get("end") is not None else None,
+        )
+        for c in payload.get("curves", [])
+    ]
+    return Profile(
+        calibration_pixel_pts=[tuple(p) for p in cal.get("pixel", [])],
+        calibration_data_pts=[tuple(p) for p in cal.get("data", [])],
+        x_log=bool(cal.get("x_log", False)),
+        y_log=bool(cal.get("y_log", False)),
+        params=ExtractionParams(**payload.get("params", {})),
+        curves=curves,
+    )
