@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from digitizer.core import calibration as calib_mod
-from digitizer.core import image_io, masking, quality, transform
+from digitizer.core import image_io, masking, quality, transform, uncertainty
 from digitizer.core.auto_detect import detect_plot_box, detect_curve_colors
 from digitizer.core.pipeline import run_pipeline
 from digitizer.core.export import NamedSeries, build_tables, serialize_delimited
@@ -674,8 +674,16 @@ class MainWindow(QMainWindow):
         return None
 
     def _named_series(self, curves: list[Curve]) -> list[NamedSeries]:
-        return [NamedSeries(c.name, c.data_xs, c.data_ys)
-                for c in curves if c.data_xs.size > 0]
+        cal = self._calibration() if self._calibration_M is not None else None
+        series: list[NamedSeries] = []
+        for c in curves:
+            if c.data_xs.size == 0:
+                continue
+            dy = None
+            if cal is not None and c.pixel_xs.size == c.data_xs.size and c.pixel_xs.size:
+                dy = uncertainty.point_uncertainty(cal, c.pixel_xs, c.pixel_ys)
+            series.append(NamedSeries(c.name, c.data_xs, c.data_ys, dy))
+        return series
 
     def _export_csv(self) -> None:
         ids = self.export_panel.checked_curve_ids()
@@ -714,7 +722,7 @@ class MainWindow(QMainWindow):
         opts = self.export_panel.export_options()
         opts.layout = "individual"
         try:
-            (table,) = build_tables([NamedSeries(c.name, c.data_xs, c.data_ys)], opts)
+            (table,) = build_tables(self._named_series([c]), opts)
         except ValueError as exc:
             QMessageBox.warning(self, "Copy failed", str(exc))
             return
