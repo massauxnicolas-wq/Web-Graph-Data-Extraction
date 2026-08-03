@@ -21,6 +21,7 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 digitizer = "digitizer.app:main"
+digitizer-batch = "digitizer.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

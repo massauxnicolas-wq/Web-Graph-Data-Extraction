@@ -28,7 +28,8 @@ pip install -e ".[dev]"
 ```
 
 ```bash
-python -m digitizer
+python -m digitizer          # GUI
+digitizer-batch IMG --profile recipe.json --out data.csv   # headless batch (digitizer/cli.py)
 ```
 
 ```bash
@@ -87,6 +88,9 @@ Practical test when unsure where code goes: *would a FastAPI endpoint need this?
 | `pipeline.py` | `run_pipeline`, `apply_postprocessing`, `ExtractionParams`, `PipelineResult` | Qt-free extraction pipeline: extract → **smooth → fill** → best-fit (order matters). The one function the UI and a future FastAPI both call. Composes `xstep` + `interpolate`. |
 | `export.py` | `NamedSeries`, `ExportOptions`, `Table`, `build_tables`, `serialize_delimited` | The single tabular-export model: series + options (resample / unit-convert / uncertainty) → Table(s) → CSV/TSV string. All CSV/TSV output routes through here. |
 | `units.py` | `convert(values, from, to)` | Built-in unit conversions (stress / temperature / strain / length / accel). No dependency; raises on unknown or cross-family. |
+| `uncertainty.py` | `point_uncertainty(cal, xs_px, ys_px)` | Per-point dy from the calibration Jacobian (±1 px → data units). Feeds `NamedSeries.dy`. |
+| `analysis.py` | `derivative`, `secant_modulus`, `area`, `initial_slope`, `curve_metrics` | Engineering curve math (tangent/secant modulus, toughness, Young's modulus). |
+| `profile.py` | `Profile`, `ProfileCurve`, `apply_profile`, `plot_bbox` | Reusable extraction recipe; `apply_profile(image, profile)` is the headless "digitize with this recipe" primitive (used by the CLI). `plot_bbox` is shared with the GUI. |
 | `auto_detect.py` | `detect_plot_box`, `detect_curve_colors` | Pure OpenCV (**no OCR**). Tesseract axis-label reading is on the `feature/ocr` branch. |
 
 ### `io/`
